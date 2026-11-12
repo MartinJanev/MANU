@@ -23,9 +23,9 @@
 set -euo pipefail
 
 # BASE="${BASE:-$HOME/manu}"
-BASE="${BASE:-$(cd "$(dirname "$0")" && pwd)}" # ова ни помага ако се мења manu фолдерот да се адаптира автоматски
+BASE="${BASE:-$(cd "$(dirname "$0")/.." && pwd)}" # ова ни помага ако се мења manu фолдерот да се адаптира автоматски
 DATA="$BASE/data"
-mkdir -p "$DATA/ixi/T1" "$DATA/molab" "$BASE/code" "$BASE/results" "$BASE/containers"
+mkdir -p "$DATA/ixi/T1" "$DATA/molab" "$BASE/results" "$BASE/containers"
 
 echo "== $(date '+%F %T')  Почеток, BASE=$BASE"
 
@@ -154,4 +154,4 @@ done < manifest.tsv
 echo
 du -sh "$DATA"/* 2>/dev/null || true
 echo "== $(date '+%F %T')  Готово. Проверка:"
-python3 "$BASE/proveri_podatoci.py" --data "$DATA" || true
+python3 "$BASE/data_tools/proveri_podatoci.py" --data "$DATA" || true

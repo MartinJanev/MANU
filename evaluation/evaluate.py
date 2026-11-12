@@ -2,7 +2,7 @@
 """
 Евалуација на сите модели (трудот, дел 6) + дијагностика зошто не работат.
 
-Чита:  ../Outputs/*_processed.jsonl         (MedGemma, M3D-Phi3/Llama2, RadFM од март)
+Чита:  reference/*_processed.jsonl         (MedGemma, M3D-Phi3/Llama2, RadFM од март)
        results/radfm_{ixi,molab,ms}.jsonl    (RadFM, ноември)
        results/radfm_*_processed.jsonl       (RadFM, нов run_radfm.py, формат од Outputs)
        results/radfm_probe.jsonl             (ако постои: run_radfm.py probe)
@@ -12,8 +12,8 @@
 Секој модел што секогаш го дава истиот одговор има balanced accuracy = 33.3%,
 па тоа е линијата „нема сигнал од сликата“.
 
-Употреба:  python3 -I code/evaluate.py [--outputs ../Outputs] [--results results]
-           python3 -I code/evaluate.py --selftest
+Употреба:  python3 -I evaluation/evaluate.py [--outputs reference] [--results results]
+           python3 -I evaluation/evaluate.py --selftest
 """
 import argparse
 import collections
@@ -366,7 +366,7 @@ def selftest():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--outputs", default=str(MANU.parent / "Outputs"))
+    ap.add_argument("--outputs", default=str(MANU / "reference"))
     ap.add_argument("--results", default=str(MANU / "results"))
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()

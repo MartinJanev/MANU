@@ -519,7 +519,7 @@ def sporedi_so_rezultati(pateka, ixi, molab, ms):
 # ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Проверка на МАНУ податоците")
-    ap.add_argument("--data", default=str(Path(__file__).resolve().parent / "data"),
+    ap.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"),
                     help="папка со ixi/, molab/, open_ms_data/ (стандардно ~/manu/data)")
     ap.add_argument("--full", action="store_true",
                     help="целосно откомпресирај секој .gz (посигурно, трае неколку минути)")

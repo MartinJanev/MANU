@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=3d-radfm
 #SBATCH --chdir=/home/hpc/users/martin.janev/manu
-#SBATCH --output=results/%x_%j.out      # %x = име на job, %j = ID на job
+#SBATCH --output=results/slurm/%x_%j.out      # %x = име на job, %j = ID на job
 #SBATCH --partition=openlab-queue
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -11,7 +11,9 @@
 
 set -euo pipefail
 
-DATASET=${1:?Употреба: sbatch job_radfm.sh ixi|molab|ms|preview [limit]}
+mkdir -p results/slurm results/radfm/full
+
+DATASET=${1:?Употреба: sbatch jobs/job_radfm.sh ixi|molab|ms|preview [limit]}
 
 echo "Job $SLURM_JOB_ID ($DATASET) на $(hostname), почеток: $(date)"
 nvidia-smi
@@ -23,16 +25,16 @@ export PYTHONUSERBASE=/pyuser
 
 
 singularity exec --nv \
-    -B ./code:/code \
+    -B ./models/radfm:/code \
     -B ./data:/data \
-    -B ./results:/results \
+    -B ./results/radfm/full:/results \
     -B ./reference:/reference \
     -B ./hf_cache:/hf_cache \
-    -B ./pyuser:/pyuser \
-    -B ./RadFM/Quick_demo:/radfm \
+    -B ./pyuser/radfm:/pyuser \
+    -B ./third_party/RadFM/Quick_demo:/radfm \
     containers/radfm.sif \
-    python3 /code/run_radfm.py "$DATASET" "${@:2}"
+    python3 /code/run.py "$DATASET" "${@:2}"
 
-singularity exec -B ./pyuser:/pyuser containers/radfm.sif pip freeze > results/requirements_radfm.txt
+singularity exec -B ./pyuser/radfm:/pyuser containers/radfm.sif pip freeze > results/radfm/full/requirements_radfm.txt
 
 echo "Крај: $(date)"
