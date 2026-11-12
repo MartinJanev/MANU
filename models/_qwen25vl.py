@@ -1,8 +1,8 @@
 """Shared loading and generation for the Qwen2.5-VL based medical models (Lingshu-7B, QoQ-Med-VL-7B).
 
-Both checkpoints load as a plain Qwen2_5_VLForConditionalGeneration, so the calls follow the Hugging Face
-transformers Qwen2.5-VL documentation. torch / transformers are imported inside the functions, so a model's
-run.py imports on a CPU-only machine.
+Both checkpoints load as a plain Qwen2_5_VLForConditionalGeneration, so the calls follow the quick starts of the
+QoQ-Med README and the Lingshu-7B model card (sources and deviations: models/<m>/NOTES.md). torch / transformers are
+imported inside the functions, so a model's run.py imports on a CPU-only machine.
 """
 
 

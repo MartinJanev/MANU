@@ -1,6 +1,7 @@
 """Lingshu-7B (Qwen2.5-VL based medical MLLM): 8 axial slices, the colleagues' full-JSON prompt, JSON answer.
 
-Usage (inside the job): python3 -m models.lingshu7b.run <runner args>
+Usage: sbatch -J lingshu7b jobs/run_model.sh lingshu7b --split dev|eval|full [--controls] [--limit N]
+       (jobs/run_model.sh runs `python3 /manu/models/lingshu7b/run.py --split ...` inside the container)
 """
 from common import runner
 from common.parse import parse_json_answer
