@@ -69,12 +69,59 @@ def test_split_report_numbers(tmp):
 
 def test_molab_patient_majority_and_missing_cells(tmp):
     d = tmp / "results" / "m" / "dev"
-    diags = ["normal", "normal", "tumor", "tumor", "stroke"]  # 2/5 scans right; 2-2 tie -> first (normal)
+    diags = ["normal", "normal", "tumor", "tumor", "stroke"]  # 2/5 scans right; 2-2 tie normal/tumor -> wrong
     write(d / "m_brain_metastases_processed.jsonl",
           [rec("m", "molab", f"010005N__010005_{i}_img.nii", x) for i, x in enumerate(diags)])
     runs = load_split(tmp / "results", tmp / "reference", "dev", SPLITS)
     line = [x for x in split_report(runs, tmp / "results", "dev") if x.startswith("| m |")][0]
     assert line.startswith("| m | full_json | 5 | 100.0% | — | 40.0% | 0.0% | — | — | — | — |")
+
+
+def _patient_cell(tmp, diags):
+    d = tmp / "results" / "m" / "dev"
+    write(d / "m_brain_metastases_processed.jsonl",
+          [rec("m", "molab", f"010005N__010005_{i}_img.nii", x) for i, x in enumerate(diags)])
+    runs = load_split(tmp / "results", tmp / "reference", "dev", SPLITS)
+    line = [x for x in split_report(runs, tmp / "results", "dev") if x.startswith("| m |")][0]
+    return [c.strip() for c in line.strip("|").split("|")][6]
+
+
+def test_patient_tie_is_wrong_whatever_the_order(tmp):
+    assert _patient_cell(tmp, ["tumor", "tumor", "normal", "normal"]) == "0.0%"
+    assert _patient_cell(tmp, ["normal", "normal", "tumor", "tumor"]) == "0.0%"
+
+
+def test_patient_strict_plurality_without_majority_is_correct(tmp):
+    assert _patient_cell(tmp, ["normal", "tumor", None, "tumor"]) == "100.0%"
+    assert _patient_cell(tmp, [None, None, "tumor", "normal"]) == "0.0%"
+
+
+def test_blank_agreement_all_null_is_none(tmp):
+    d = tmp / "results" / "m" / "dev"
+    nulls = dict(diagnosis_name=None, modality=None, plane=None)
+    write(d / "m_healthy_processed.jsonl", [build_record("m", "ixi", "full_json", 1, "IXI002-Guys-0828-T1.nii.gz", IXI_META, nulls, None)])
+    write(d / "m_healthy_controls.jsonl",
+          [build_record("m", "ixi", "full_json", 1, "BLANK__IXI002-Guys-0828-T1.nii.gz", IXI_META, nulls, None)])
+    assert blank_agreement(tmp / "results", "m", "dev") is None
+
+
+def test_blank_agreement_ignores_null_fields(tmp):
+    d = tmp / "results" / "m" / "dev"
+    real = dict(diagnosis_name=None, modality="MRI", plane=None)
+    write(d / "m_healthy_processed.jsonl",
+          [build_record("m", "ixi", "full_json", 1, "IXI002-Guys-0828-T1.nii.gz", IXI_META, real, None)])
+    write(d / "m_healthy_controls.jsonl",
+          [build_record("m", "ixi", "full_json", 1, "BLANK__IXI002-Guys-0828-T1.nii.gz", IXI_META, real, None)])
+    assert blank_agreement(tmp / "results", "m", "dev") == 1.0
+
+
+def test_legend_states_both_rules(tmp):
+    d = tmp / "results" / "m" / "dev"
+    write(d / "m_healthy_processed.jsonl", [rec("m", "ixi", "IXI002-Guys-0828-T1.nii.gz", "normal")])
+    runs = load_split(tmp / "results", tmp / "reference", "dev", SPLITS)
+    text = "\n".join(split_report(runs, tmp / "results", "dev"))
+    assert "MOLAB patient majority: correct only with a strict plurality for the truth label (ties count as wrong)." in text
+    assert "Blank agreement: share of categorical fields with a non-null usual answer" in text
 
 
 def test_blank_agreement(tmp):

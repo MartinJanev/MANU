@@ -449,8 +449,9 @@ def _model_dir(results, model, split):
 
 
 def blank_agreement(results, model, split):
-    """Share of categorical fields where the blank-volume control equals the most common real value of the
-    dataset, averaged over the datasets that have a controls file. None without controls."""
+    """Per dataset, share of the categorical fields whose most common real value is non-null where the
+    blank-volume control gives that same value; averaged over the datasets that contribute. A dataset
+    with no such field contributes nothing; None when no dataset contributes."""
     directory = Path(results) / model / split
     if not directory.is_dir():
         return None
@@ -465,8 +466,10 @@ def blank_agreement(results, model, split):
         hits = []
         for key in keys:
             common = collections.Counter(json.dumps(p.get(key)) for p in real).most_common(1)[0][0]
-            hits.append(json.dumps(controls[0].get(key)) == common)
-        shares.append(sum(hits) / len(hits))
+            if common != "null":
+                hits.append(json.dumps(controls[0].get(key)) == common)
+        if hits:
+            shares.append(sum(hits) / len(hits))
     return statistics.mean(shares) if shares else None
 
 
@@ -496,11 +499,16 @@ def _diag_acc(rows, dataset):
 
 
 def _molab_patient_acc(rows):
-    """Majority vote of the diagnosis over each patient's scans (ties: first most common)."""
+    """Majority vote of the diagnosis over each patient's scans (correct only with a strict plurality
+    for the truth label; any tie for first place, nulls counted as a label, is wrong)."""
     votes = collections.defaultdict(list)
     for image, p, _ in rows:
         votes[patient_id("molab", image)].append(field(p, "diagnosis_name"))
-    wins = [collections.Counter(v).most_common(1)[0][0] == TRUTH_DIAG["molab"] for v in votes.values()]
+    wins = []
+    for v in votes.values():
+        counts = collections.Counter(v)
+        mine = counts.pop(TRUTH_DIAG["molab"], 0)
+        wins.append(mine > max(counts.values(), default=0))
     return sum(wins) / len(wins)
 
 
@@ -536,6 +544,9 @@ def split_report(runs, results, split):
          "fields where the blank-volume control equals the most common real answer (high = image ignored).", ""]
     L += table(["model", "mode", "records", "valid", "IXI acc", "MOLAB acc (scan)", "MOLAB acc (patient majority)",
                 "MS acc", "pooled bal.acc", "blank agreement", "median s/scan"], rows) + [""]
+    L += ["MOLAB patient majority: correct only with a strict plurality for the truth label (ties count as wrong). "
+          "Blank agreement: share of categorical fields with a non-null usual answer where the blank-image "
+          "control gives that same answer (high = the model ignores the image).", ""]
     shown = {m: per for m, per in scored.items() if per}
     L += ["## Confusion matrices (diagnosis)", ""]
     L += confusion_lines(shown, "truth \\ model", "rows = truth, columns = predicted")
