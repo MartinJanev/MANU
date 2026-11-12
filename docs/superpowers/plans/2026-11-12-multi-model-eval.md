@@ -315,7 +315,7 @@ def test_extract_confidences_are_null(): ...   # every *_confidence and severity
 ```
 
 - [ ] **Step 2: Run** `.venv/bin/python -m pytest tests/test_schema.py tests/test_parse.py -q` → FAIL.
-- [ ] **Step 3: Implement** `common/schema.py`, `common/parse.py`, the three prompt files.
+- [ ] **Step 3: Implement** `common/schema.py`, `common/parse.py`, the four prompt files.
 - [ ] **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(common): record format, prompts, JSON/report/choice parsing`
 
@@ -533,7 +533,7 @@ Purpose: a small chest-CT control. For Med-2E3 and MedM-VL it is their training 
 - Consumes: `common.datasets` (Task 2), `evaluation.evaluate.load_split` / `split_report` (Task 9).
 - Produces:
   - `select_files(repo_files: list[str], patients: list[str]) -> dict[str, str]` — patient → repo path of its `valid_N_a_1.nii.gz` matching `^dataset/valid[^/]*/valid_N/valid_N_a/valid_N_a_1\.nii\.gz$`, preferring a `valid_fixed` path when both exist; `ValueError` naming a missing patient.
-  - CLI `python3 data_tools/prezemi_ct_rate.py [--split dev|eval|all]` — needs only `huggingface_hub` (token from env `HF_TOKEN`, an account that accepted the dataset terms). Downloads into `data/ct_rate/`, keeping repo paths, the selected volumes plus `dataset/multi_abnormality_labels/valid_predicted_labels.csv`, `dataset/radiology_text_reports/validation_reports.csv`, `dataset/metadata/validation_metadata.csv` from `ibrahimhamamci/CT-RATE` (gated, 21.3 TB in total; only these files are fetched). Then prints per patient: path, number of positive labels, and, if nibabel imports, shape and min/max.
+  - CLI `python3 data_tools/prezemi_ct_rate.py [--split dev|eval|all]` — needs only `huggingface_hub` (token from env `HF_TOKEN`, an account that accepted the dataset terms, passed explicitly as `token=` to every call so it also works with the old `huggingface-hub==0.16.4` in `radfm.sif`). Downloads into `data/ct_rate/`, keeping repo paths, the selected volumes plus `dataset/multi_abnormality_labels/valid_predicted_labels.csv`, `dataset/radiology_text_reports/validation_reports.csv`, `dataset/metadata/validation_metadata.csv` from `ibrahimhamamci/CT-RATE` (gated, 21.3 TB in total; only these files are fetched). Then prints per patient: path, number of positive labels, and, if nibabel imports, shape and min/max.
   - `DATASETS["ct_rate"] = {"glob": "ct_rate/dataset/valid*/valid_*/valid_*_a/valid_*_a_1.nii.gz", "tag": "ct_rate", "experiment": "ct_rate"}`; `patient_id("ct_rate", "valid_12_a_1.nii.gz") == "valid_12"`; `image_path` = file basename.
   - `ground_truth` for `ct_rate` → `{"dataset": "ct_rate", "class": None, "modality": "CT", "axial_plane": "axial", "modality_subtype": None, "icd10_code": None, "abnormalities": [label columns equal to 1 for that VolumeName]}`.
   - `splits.json`: `"ct_rate": ["valid_1"]` in dev, `["valid_2", "valid_3", "valid_4"]` in eval.
@@ -579,7 +579,7 @@ Every model task follows these steps; its own block gives the specifics. The imp
 - [ ] **Step 4:** Run the task's tests and the full suite → PASS.
 - [ ] **Step 5:** Commit `feat(<m>): adapter`.
 - [ ] **Step 6 [cluster]:** `bash tools/sync_to_cluster.sh`; on the login node `bash jobs/setup_env.sh <m>` → ends with the torch (2.6.0a0…) and transformers versions.
-- [ ] **Step 7 [cluster]:** `sbatch -J <m> jobs/run_model.sh <m> --split dev --controls` → `results/<m>/dev/` has 7 processed records (1 + 4 + 1 + 1) and 4 controls; for each tag `python3 evaluation/check_schema.py results/<m>/dev/<m>_<tag>_processed.jsonl reference/radfm_<tag>_processed.jsonl` → `same structure`.
+- [ ] **Step 7 [cluster]:** `sbatch -J <m> jobs/run_model.sh <m> --split dev --controls` → `results/<m>/dev/` has 7 processed records (1 + 4 + 1 + 1) and 4 controls; for each brain tag (`healthy`, `brain_metastases`, `ms`) `python3 evaluation/check_schema.py results/<m>/dev/<m>_<tag>_processed.jsonl reference/radfm_<tag>_processed.jsonl` → `same structure`. CT-RATE has no colleague reference file (its metadata adds `abnormalities`); check that its record has `status` `success` and the IXI `parsed_response` keys.
 - [ ] **Step 8:** `bash tools/fetch_results.sh`; `python3 -I evaluation/evaluate.py --split dev`; fill `NOTES.md` › Dev run: peak VRAM (from `nvidia-smi` in the log), median s/scan, valid rate, blank agreement, parse problems (`details`), position-bias rate (QnA models: share of `agree == False`). If the dev run shows a pipeline bug, fix it and repeat Step 7: this is what the dev split is for.
 - [ ] **Step 9 [cluster]:** `sbatch -J <m> jobs/run_model.sh <m> --split eval --controls` → 28 processed records and 4 controls.
 - [ ] **Step 10:** Fetch, fill `NOTES.md` › Eval run and › Pitfalls, commit `docs(<m>): dev/eval notes`.
@@ -611,7 +611,7 @@ Every model task follows these steps; its own block gives the specifics. The imp
 ### Task 14: HLIP — `models/hlip` (name `hlip`, mode `clip_or_heads`)
 
 - `GIT_REPOS="https://github.com/Zch0414/hlip@<commit>"`; the brain-MRI checkpoint named in the repo README (project notes mention ViT-L `dualdinotxt1568`); record the exact file in `env.sh`.
-- `preprocess(vol: np.ndarray) -> np.ndarray` returns `(48, 224, 224)`, replicating the intensity steps of `src/hlip_test/zeroshot_pubbrain5.py` on our canonical volume.
+- `preprocess(vol: np.ndarray) -> np.ndarray` returns `(48, 224, 224)`, applying the intensity steps of `src/hlip_test/zeroshot_pubbrain5.py` to the `to01` output of our canonical volume.
 - Zero-shot: template `This study shows: {c} identified.` over the class strings copied verbatim from `src/hlip/zeroshot_metadata_pubbrain5.py` and `zeroshot_metadata_mrrate.py`, mapped to groups: no significant abnormalities → `normal`; metastasis, glioma, meningioma, "Metastatic malignant neoplasm to brain" → `tumor`; stroke classes → `stroke`; "Demyelinating disease of central nervous system" → `multiple sclerosis`. `_score(volume) -> dict[class, probability]` (softmax over classes).
 - `predict`: `diagnosis_name` = group with the largest summed probability, `diagnosis_confidence` = that sum; every other field `None` (no constants).
 - Tests: `test_preprocess_shape`; `test_grouping` (fake probabilities with tumor classes summing highest → `tumor`, confidence = the sum); `test_other_fields_null`.
