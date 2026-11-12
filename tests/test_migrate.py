@@ -80,6 +80,23 @@ def test_apply_produces_cluster_layout(old_tree):
     assert not (old_tree / "results/radfm_healthy_processed.jsonl").exists()
 
 
+def test_dry_run_prints_copy_plan(old_tree):
+    r = run_migrate(old_tree)
+    archived = f"results/archive/cluster_{date.today():%Y-%m-%d}"
+    for kind in ("processed", "details"):
+        name = f"radfm_healthy_{kind}.jsonl"
+        assert f"cp {archived}/{name} results/radfm/full/{name}" in r.stdout.splitlines()
+
+
+def test_pyuser_other_entries_stay_in_place(old_tree):
+    touch(old_tree, "pyuser/qwen/x", "qwen")
+    r = run_migrate(old_tree, "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (old_tree / "pyuser/qwen/x").read_text() == "qwen"
+    assert (old_tree / "pyuser/radfm/lib/python3.10/site-packages/x").exists()
+    assert not (old_tree / "pyuser/radfm/qwen").exists()
+
+
 def test_apply_is_idempotent(old_tree):
     run_migrate(old_tree, "--apply")
     before = snapshot(old_tree)
@@ -116,6 +133,19 @@ def test_refuses_outside_repo_root(tmp_path):
     assert r.returncode == 1
     assert "repo root" in r.stderr
     assert list(tmp_path.iterdir()) == []
+
+
+def test_refuses_without_data_dir(tmp_path):
+    root = tmp_path / "mac"
+    (root / "tools").mkdir(parents=True)
+    for f in ("layout.py", "migrate_cluster.sh"):
+        shutil.copy(REPO / "tools" / f, root / "tools" / f)
+    touch(root, "results/summary.csv")
+    before = snapshot(root)
+    r = run_migrate(root, "--apply")
+    assert r.returncode == 1
+    assert "data/" in r.stderr
+    assert snapshot(root) == before
 
 
 def test_sync_scripts_parse():

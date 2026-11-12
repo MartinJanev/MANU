@@ -18,6 +18,10 @@ if [ ! -f tools/layout.py ]; then
     echo "error: run this from the repo root (tools/layout.py not found in $PWD)" >&2
     exit 1
 fi
+if [ ! -d data ]; then
+    echo "error: no data/ directory in $PWD; this script is for the cluster, not a local checkout" >&2
+    exit 1
+fi
 
 # act VERB SRC DST: mv/cp SRC to DST only if SRC exists and DST does not. Returns 0 if it acted.
 act() {
@@ -60,13 +64,20 @@ for f in results/*; do
 done
 # Only files moved in this run are copied, so a second run finds nothing to do.
 for name in ${copies[@]+"${copies[@]}"}; do
-    act cp "$archive/$name" "results/radfm/full/$name" || true
+    if [ "$APPLY" = 1 ]; then
+        act cp "$archive/$name" "results/radfm/full/$name" || true
+    elif [ -e "results/radfm/full/$name" ] || [ -L "results/radfm/full/$name" ]; then
+        echo "skip (exists): results/radfm/full/$name"
+    else
+        echo "cp $archive/$name results/radfm/full/$name"   # source exists only after the real mv
+    fi
 done
 
 act mv RadFM third_party/RadFM || true
 if [ -d pyuser ] && [ ! -e pyuser/radfm ]; then
-    for f in pyuser/*; do
-        act mv "$f" "pyuser/radfm/$(basename "$f")" || true
+    # only the old pip --target layout; other model envs (pyuser/<model>) stay where they are
+    for n in lib lib64 bin include share etc pyvenv.cfg; do
+        act mv "pyuser/$n" "pyuser/radfm/$n" || true
     done
 fi
 
