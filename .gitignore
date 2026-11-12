@@ -1,0 +1,13 @@
+data/
+hf_cache/
+pyuser/
+third_party/
+containers/*.sif
+results/
+.idea/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.manu_commit
+.superpowers/
