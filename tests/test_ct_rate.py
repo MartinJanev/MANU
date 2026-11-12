@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +58,104 @@ def test_download_requires_token(monkeypatch):
     monkeypatch.delenv("HF_TOKEN", raising=False)
     with pytest.raises(SystemExit, match="HF_TOKEN"):
         prezemi.main(["--split", "dev"])
+
+
+# Stand-ins for huggingface_hub's exceptions (the library is not installed in the test venv).
+EntryNotFound = type("EntryNotFoundError", (Exception,), {})
+LocalEntryNotFound = type("LocalEntryNotFoundError", (EntryNotFound,), {})
+
+
+def http_error(status, name="HfHubHTTPError"):
+    e = type(name, (Exception,), {})(f"HTTP {status}")
+    e.response = SimpleNamespace(status_code=status)
+    return e
+
+
+def vol(parent, patient):
+    return f"dataset/{parent}/{patient}/{patient}_a/{patient}_a_1.nii.gz"
+
+
+class FakeHub:
+    """Stands in for hf_hub_download: files in `present` download, others raise EntryNotFoundError."""
+
+    def __init__(self, present, error=None):
+        self.present, self.error, self.calls, self.downloaded = set(present), error, [], []
+
+    def __call__(self, **kw):
+        self.calls.append(kw)
+        if self.error is not None:
+            raise self.error
+        if kw["filename"] not in self.present:
+            raise EntryNotFound(kw["filename"])
+        self.downloaded.append(kw["filename"])
+        return str(Path(kw["local_dir"]) / kw["filename"])
+
+
+def test_is_not_found_recognises_missing_files_only():
+    assert prezemi._is_not_found(EntryNotFound("x"))
+    assert prezemi._is_not_found(type("SubError", (EntryNotFound,), {})("x"))
+    assert prezemi._is_not_found(http_error(404))
+    assert not prezemi._is_not_found(http_error(403, "GatedRepoError"))
+    assert not prezemi._is_not_found(http_error(401))
+    assert not prezemi._is_not_found(ValueError("x"))
+    assert not prezemi._is_not_found(LocalEntryNotFound("connection down"))       # network, not a missing file
+    assert not prezemi._is_not_found(http_error(404, "RepositoryNotFoundError"))  # repo, not a missing file
+
+
+def test_download_uses_valid_fixed(tmp_path):
+    hub = FakeHub({vol("valid_fixed", "valid_1"), *prezemi.EXTRA_FILES})
+    assert prezemi.download(["valid_1"], tmp_path, "tok", hub) == {"valid_1": vol("valid_fixed", "valid_1")}
+    assert [c["filename"] for c in hub.calls] == [vol("valid_fixed", "valid_1"), *prezemi.EXTRA_FILES]
+    for c in hub.calls:
+        assert c == {"repo_id": "ibrahimhamamci/CT-RATE", "repo_type": "dataset", "filename": c["filename"],
+                     "local_dir": str(tmp_path / "ct_rate"), "local_dir_use_symlinks": False, "token": "tok"}
+
+
+def test_download_falls_back_to_valid(tmp_path):
+    hub = FakeHub({vol("valid", "valid_1"), *prezemi.EXTRA_FILES})
+    assert prezemi.download(["valid_1"], tmp_path, "tok", hub) == {"valid_1": vol("valid", "valid_1")}
+    assert hub.downloaded == [vol("valid", "valid_1"), *prezemi.EXTRA_FILES]
+
+
+def test_download_names_every_missing_patient_after_trying_all(tmp_path):
+    hub = FakeHub({vol("valid_fixed", "valid_1"), *prezemi.EXTRA_FILES})
+    with pytest.raises(ValueError) as e:
+        prezemi.download(["valid_9", "valid_1", "valid_8"], tmp_path, "tok", hub)
+    msg = str(e.value)
+    assert "valid_9" in msg and "valid_8" in msg and not re.search(r"valid_1\b", msg)
+    assert vol("valid_fixed", "valid_1") in hub.downloaded
+    tried = [c["filename"] for c in hub.calls]
+    assert vol("valid_fixed", "valid_9") in tried and vol("valid", "valid_9") in tried
+
+
+def test_download_auth_error_propagates_with_hint(tmp_path, capsys):
+    gated = http_error(403, "GatedRepoError")
+    hub = FakeHub(set(), error=gated)
+    with pytest.raises(type(gated)):
+        prezemi.download(["valid_1", "valid_2"], tmp_path, "tok", hub)
+    assert len(hub.calls) == 1          # not taken for a missing valid_fixed file: no fallback, no next patient
+    err = capsys.readouterr().err
+    assert "HF_TOKEN" in err and "terms" in err
+
+
+def test_fetch_retries_without_symlink_keyword(tmp_path):
+    calls = []
+
+    def new_hub(**kw):
+        calls.append(kw)
+        if "local_dir_use_symlinks" in kw:
+            raise TypeError("hf_hub_download() got an unexpected keyword argument 'local_dir_use_symlinks'")
+        return "ok"
+
+    assert prezemi.fetch(prezemi.LABELS, tmp_path, "tok", new_hub) == "ok"
+    assert [("local_dir_use_symlinks" in c) for c in calls] == [True, False]
+    assert calls[1]["filename"] == prezemi.LABELS and calls[1]["token"] == "tok"
+
+    def broken(**kw):
+        raise TypeError("something else")
+
+    with pytest.raises(TypeError, match="something else"):
+        prezemi.fetch(prezemi.LABELS, tmp_path, "tok", broken)
 
 
 def test_ct_rate_scans(tree):
@@ -113,9 +213,17 @@ def test_ct_rate_table_unknown_truth_and_nulls():
     assert "| x | 1 | 100.0% | 100.0% | — |" in text
 
 
+def test_ct_rate_table_out_of_vocabulary_diagnosis_is_wrong():
+    # The runner stores an out-of-vocabulary answer as null; one that slipped through is no diagnosis either.
+    runs = {"m": {"ct_rate": [row("valid_1_a_1.nii.gz", ["Emphysema"], diagnosis_name="emphysema"),
+                              row("valid_2_a_1.nii.gz", ["Emphysema"], diagnosis_name=None)]}}
+    assert "| m | 2 | 100.0% | 100.0% | 0.0% |" in "\n".join(ct_rate_table(runs))
+
+
 def test_split_report_appends_ct_rate_table(tmp_path):
     rec = build_record("m", "ct_rate", "full_json", 0, "valid_1_a_1.nii.gz",
-                       {"abnormalities": ["Emphysema"]}, {"modality": "CT", "plane": "axial", "diagnosis_name": "other"}, None)
+                       {"abnormalities": ["Emphysema"]},
+                       {"modality": "CT", "plane": "axial", "diagnosis_name": "other abnormalities"}, None)
     path = tmp_path / "results" / "m" / "dev" / "m_ct_rate_processed.jsonl"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(rec) + "\n")

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Download the few CT-RATE chest-CT volumes used as a control (gated dataset, 21.3 TB in total).
 
-Only the first scan of each split patient (valid_N_a_1.nii.gz) and three small CSV files are fetched.
-Needs only huggingface_hub (imported lazily) and a token in HF_TOKEN from an account that accepted the
-dataset terms.
+Only the first scan of each split patient (valid_N_a_1.nii.gz) and three small CSV files are fetched, by
+their known paths (no repository listing): dataset/valid_fixed/... first, dataset/valid/... if that file
+does not exist. Needs only huggingface_hub (imported lazily; works with 0.16.4) and a token in HF_TOKEN from
+an account that accepted the dataset terms.
 
   export HF_TOKEN=...
   python3 data_tools/prezemi_ct_rate.py [--split dev|eval|all] [--data data] [--splits splits.json]
@@ -45,35 +46,76 @@ def split_patients(splits_path, split):
     return [p for name in names for p in splits[name]["ct_rate"]]
 
 
-def list_repo(api, patients):
-    """Repo file paths under the candidate folders of each patient (never the whole repository)."""
-    files = []
+def _class_names(exc):
+    return {c.__name__ for c in type(exc).__mro__}
+
+
+def _status(exc):
+    return getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def _is_not_found(exc):
+    """True when the requested file does not exist in the repository (EntryNotFoundError or HTTP 404).
+    LocalEntryNotFoundError (huggingface_hub's 'connection down and not cached') and a repository that is
+    not found are not a missing file."""
+    names = _class_names(exc)
+    if names & {"LocalEntryNotFoundError", "RepositoryNotFoundError"}:
+        return False
+    return "EntryNotFoundError" in names or _status(exc) == 404
+
+
+def _is_access_error(exc):
+    return _status(exc) in (401, 403) or bool(_class_names(exc) & {"GatedRepoError", "RepositoryNotFoundError"})
+
+
+def fetch(repo_path, local_dir, token, download=None):
+    """Download one repo file to local_dir/<repo_path> as a real file (no symlink into the HF cache)."""
+    if download is None:
+        from huggingface_hub import hf_hub_download as download  # lazy: the module imports without it
+    kwargs = {"repo_id": REPO_ID, "repo_type": "dataset", "filename": repo_path, "local_dir": str(local_dir),
+              "token": token}
+    try:
+        try:
+            return download(**kwargs, local_dir_use_symlinks=False)  # 0.16.4 symlinks big files otherwise
+        except TypeError as e:
+            if "local_dir_use_symlinks" not in str(e):
+                raise
+            return download(**kwargs)  # newer huggingface_hub without that keyword: always real files
+    except Exception as e:
+        if _is_access_error(e):
+            print(f"Access to {REPO_ID} denied: accept the dataset terms on https://huggingface.co/datasets/"
+                  f"{REPO_ID} with the account whose token is in HF_TOKEN, and check that the token is valid.",
+                  file=sys.stderr, flush=True)
+        raise
+
+
+def download(patients, data_dir, token, hf_download=None):
+    """Download each patient's <P>_a_1.nii.gz (valid_fixed, else valid) and the three CSV files, keeping repo
+    paths under data_dir/ct_rate. No repository listing: the paths are known. Returns patient -> repo path;
+    raises ValueError naming every patient found in neither folder (after trying all of them)."""
+    local_dir = Path(data_dir) / "ct_rate"
+    selected, missing = {}, []
     for patient in patients:
         for parent in PARENTS:
-            path = f"{parent}/{patient}"
+            repo_path = f"{parent}/{patient}/{patient}_a/{patient}_a_1.nii.gz"
+            print(f"downloading {repo_path}", flush=True)
             try:
-                if hasattr(api, "list_repo_tree"):
-                    entries = api.list_repo_tree(REPO_ID, repo_type="dataset", path_in_repo=path, recursive=True)
-                    files += [getattr(e, "path", None) or e.rfilename for e in entries]
-                else:  # very old huggingface_hub: no tree listing
-                    files += [f for f in api.list_repo_files(REPO_ID, repo_type="dataset")
-                              if f.startswith(path + "/")]
-            except Exception as e:  # noqa: BLE001 - a folder that does not exist is expected
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                if type(e).__name__ != "EntryNotFoundError" and status != 404:
+                fetch(repo_path, local_dir, token, hf_download)
+            except Exception as e:  # noqa: BLE001 - only "file not found" moves on to the next folder
+                if not _is_not_found(e):
                     raise
-    return files
-
-
-def download(patients, data_dir, token):
-    from huggingface_hub import HfApi, hf_hub_download  # lazy: the module imports without huggingface_hub
-
-    selected = select_files(list_repo(HfApi(token=token), patients), patients)
-    local = {}
-    for repo_path in [*selected.values(), *EXTRA_FILES]:
+                print(f"  not in the repository: {repo_path}", flush=True)
+                continue
+            selected[patient] = repo_path
+            break
+        else:
+            missing.append(patient)
+    for repo_path in EXTRA_FILES:
         print(f"downloading {repo_path}", flush=True)
-        local[repo_path] = hf_hub_download(REPO_ID, repo_path, repo_type="dataset",
-                                           local_dir=str(Path(data_dir) / "ct_rate"), token=token)
+        fetch(repo_path, local_dir, token, hf_download)
+    if missing:
+        raise ValueError(f"no <P>_a_1.nii.gz under {' or '.join(PARENTS)} for patient(s) {', '.join(missing)}: "
+                         "replace them in splits.json")
     return selected
 
 
