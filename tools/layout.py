@@ -1,7 +1,7 @@
 """Check that a MANU checkout (local or cluster) has the expected layout.
 
 Usage:  python3 tools/layout.py [--cluster] [ROOT]
-Prints missing entries, exits 1 if any. An entry ending in "/" is a directory.
+Prints missing entries and exits 1 if any; prints OK and exits 0 otherwise. An entry ending in "/" is a directory.
 """
 import argparse
 import sys
@@ -39,6 +39,8 @@ def main() -> int:
     missing = check(Path(a.root), CLUSTER_LAYOUT if a.cluster else CODE_LAYOUT)
     for m in missing:
         print(m)
+    if not missing:
+        print("OK")
     return 1 if missing else 0
 
 

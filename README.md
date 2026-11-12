@@ -10,7 +10,7 @@ jobs/          job_radfm.sh (SLURM)
 containers/    radfm.Dockerfile (+ *.sif on the cluster only)
 data_tools/    prezemi_podatoci.sh  proveri_podatoci.py
 evaluation/    evaluate.py  check_schema.py
-tools/         layout.py (layout check)
+tools/         layout.py, migrate_cluster.sh, sync_to_cluster.sh, fetch_results.sh
 reference/     colleagues' *_processed.jsonl
 results/       <model>/<split>/..., slurm/, archive/  (not in git)
 archive/code/  old RadFM runners
@@ -27,8 +27,40 @@ Check a checkout: `python3 tools/layout.py [--cluster] [ROOT]`.
 
 ## Running a model
 
-(dev, then eval; commands are filled in with the runner, Task 7)
+On the cluster login node, once per model (downloads weights, builds `pyuser/<model>`):
+
+```
+bash jobs/setup_env.sh <model>
+```
+
+Then submit dev first, eval after:
+
+```
+sbatch -J <model> jobs/run_model.sh <model> --split dev --controls
+sbatch -J <model> jobs/run_model.sh <model> --split eval --controls
+```
+
+Results go to `results/<model>/<split>/`. Score them locally with
+`python3 -I evaluation/evaluate.py --split dev`.
 
 ## Cluster sync
 
-(sync and fetch commands are filled in with the sync scripts, Task 8)
+EduVPN on. From the Mac (never deletes on the cluster; `RSYNC_DRY=1` for a dry run,
+`CLUSTER` / `REMOTE` override the target):
+
+```
+bash tools/sync_to_cluster.sh
+```
+
+Once, on the cluster, to move its own files into the new layout (the first run only prints the plan):
+
+```
+bash tools/migrate_cluster.sh
+bash tools/migrate_cluster.sh --apply
+```
+
+Fetch results back to `./results/` (without `archive/`):
+
+```
+bash tools/fetch_results.sh
+```

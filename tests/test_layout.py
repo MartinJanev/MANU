@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import json
 from pathlib import Path
 
@@ -23,3 +25,11 @@ def test_splits_json():
     s = json.loads((REPO / "splits.json").read_text())
     assert {k: s["dev"][k] for k in ("ixi", "molab", "ms")} == {"ixi": ["IXI002"], "molab": ["010005N"], "ms": ["patient05"]}
     assert s["eval"]["molab"] == ["010020N", "010024N", "010029N"]
+
+
+def test_cli_prints_ok_or_missing(tmp_path):
+    cli = [sys.executable, str(REPO / "tools/layout.py")]
+    ok = subprocess.run(cli + [str(REPO)], capture_output=True, text=True)
+    assert (ok.returncode, ok.stdout.splitlines()[-1]) == (0, "OK")
+    bad = subprocess.run(cli + [str(tmp_path)], capture_output=True, text=True)
+    assert bad.returncode == 1 and "README.md" in bad.stdout and "OK" not in bad.stdout
