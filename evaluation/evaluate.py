@@ -512,6 +512,38 @@ def _molab_patient_acc(rows):
     return sum(wins) / len(wins)
 
 
+def _predicted_abnormal(pred):
+    """True/False from diagnosis_name; None when the model gave no diagnosis (counts as wrong).
+    An answer outside the vocabulary (e.g. 'emphysema') is still an abnormal call."""
+    diagnosis = field(pred, "diagnosis_name")
+    if diagnosis is None:
+        diagnosis = norm((pred or {}).get("diagnosis_name"))
+    return None if diagnosis is None else diagnosis != "normal"
+
+
+def ct_rate_table(runs):
+    """Markdown lines: per model, how a chest-CT control is read (modality, plane, normal vs abnormal).
+    Truth abnormal = at least one positive label; scans with unknown truth (abnormalities null) are left
+    out of the last column's denominator ('—' when none is left)."""
+    rows = []
+    for model, per_ds in runs.items():
+        rs = per_ds.get("ct_rate")
+        if not rs:
+            continue
+        known = [(p, m["abnormalities"]) for _, p, m in rs if m.get("abnormalities") is not None]
+        agree = pct(sum(_predicted_abnormal(p) == bool(a) for p, a in known) / len(known)) if known else "—"
+        rows.append([model, len(rs),
+                     pct(sum(field(p, "modality") == "ct" for _, p, _ in rs) / len(rs)),
+                     pct(sum(field(p, "plane") == "axial" for _, p, _ in rs) / len(rs)), agree])
+    if not rows:
+        return []
+    return ["## CT-RATE (chest CT control)", "",
+            "Share of scans where the answer is right: modality CT, plane axial, normal/abnormal agrees with "
+            "the labels (abnormal = at least one positive label; a null diagnosis is wrong; scans with "
+            "unknown labels are excluded from the last column).", ""] \
+        + table(["model", "n", "modality = CT", "plane = axial", "normal/abnormal agrees"], rows) + [""]
+
+
 def split_report(runs, results, split):
     """Markdown lines: main table per model, then the confusion and collapse sections."""
     scored = {m: {d: rs for d, rs in per.items() if d in TRUTH_DIAG and rs} for m, per in runs.items()}
@@ -553,7 +585,7 @@ def split_report(runs, results, split):
     L += ["## Collapse: how many distinct answers does the model give?", "",
           "Cell = number of distinct values · share of the most common (most common value).", ""]
     L += collapse_lines(shown, "field")
-    return L
+    return L + ct_rate_table(runs)
 
 
 # ---------------------------------------------------------------- self-check

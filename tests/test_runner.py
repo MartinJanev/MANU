@@ -145,7 +145,7 @@ def test_main_parses_arguments(tmp, monkeypatch):
     seen = {}
     monkeypatch.setattr(runner, "run", lambda adapter, **kw: seen.update(kw))
     monkeypatch.setattr(runner, "load_splits", lambda p: SPLITS)
-    runner.main(FakeAdapter(), ["--split", "dev", "--limit", "2", "--controls", "--ms-flair"])
+    runner.main(FakeAdapter(), ["--split", "dev", "--datasets", "ixi,molab,ms", "--limit", "2", "--controls", "--ms-flair"])
     assert seen["split"] == "dev" and seen["limit"] == 2 and seen["controls"] and seen["ms_flair"]
     assert seen["datasets"] == ["ixi", "molab", "ms"] and seen["data_dir"] == "/data"
 

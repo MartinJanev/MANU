@@ -2,6 +2,7 @@
 
 Standard library only: this module must import without numpy, nibabel or torch.
 """
+import csv
 import glob
 import json
 import os
@@ -16,7 +17,14 @@ DATASETS = {
         "tag": "ms",
         "experiment": "multiple_sclerosis",
     },
+    "ct_rate": {
+        "glob": "ct_rate/dataset/valid*/valid_*/valid_*_a/valid_*_a_1.nii.gz",
+        "tag": "ct_rate",
+        "experiment": "ct_rate",
+    },
 }
+
+CT_RATE_LABELS = "ct_rate/dataset/multi_abnormality_labels/valid_predicted_labels.csv"
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,8 @@ def patient_id(dataset, image_path):
         return image_path.split("__", 1)[0]
     if dataset == "ms":
         return image_path.split("_", 1)[0]
+    if dataset == "ct_rate":
+        return re.match(r"(valid_\d+)_", image_path).group(1)
     raise KeyError(dataset)
 
 
@@ -58,6 +68,9 @@ def _scan_from_file(data_dir, dataset, path, ms_flair):
         return Scan(dataset, patient_id(dataset, name), name, (path,))
     if dataset == "molab":
         name = molab_name(os.path.basename(path))
+        return Scan(dataset, patient_id(dataset, name), name, (path,))
+    if dataset == "ct_rate":
+        name = os.path.basename(path)
         return Scan(dataset, patient_id(dataset, name), name, (path,))
     folder = os.path.dirname(path)  # ms: one patient folder
     patient = os.path.basename(folder)
@@ -72,6 +85,12 @@ def find_scans(data_dir, dataset, split, splits, ms_flair=False):
     silently evaluated on fewer patients than intended."""
     pattern = os.path.join(data_dir, DATASETS[dataset]["glob"])
     scans = [_scan_from_file(data_dir, dataset, p, ms_flair) for p in sorted(glob.glob(pattern))]
+    if dataset == "ct_rate":  # the same volume may sit under dataset/valid and dataset/valid_fixed
+        by_name = {}
+        for s in scans:
+            if s.image_path not in by_name or "valid_fixed" in s.files[0]:
+                by_name[s.image_path] = s
+        scans = list(by_name.values())
     if split != "full":
         wanted = list(splits[split][dataset])
         found = {s.patient for s in scans}
@@ -112,7 +131,47 @@ def metadata_for(image_path, reference):
     return meta
 
 
+_LABEL_CACHE = {}
+_WARNED = set()
+
+
+def _warn_once(message):
+    if message not in _WARNED:
+        _WARNED.add(message)
+        print(f"WARNING: {message}", flush=True)
+
+
+def load_ct_rate_labels(data_dir):
+    """VolumeName -> [abnormality columns equal to 1]; None when the labels CSV is missing (cached)."""
+    path = os.path.join(data_dir, CT_RATE_LABELS)
+    key = os.path.abspath(path)
+    if key not in _LABEL_CACHE:
+        labels = None
+        if os.path.isfile(path):
+            labels = {}
+            with open(path, encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    name = row.pop("VolumeName")
+                    labels[name] = [c for c, v in row.items() if str(v).strip() in ("1", "1.0")]
+        else:
+            _warn_once(f"CT-RATE labels CSV not found: {path}; abnormalities set to null")
+        _LABEL_CACHE[key] = labels
+    return _LABEL_CACHE[key]
+
+
+def _ct_rate_truth(scan, data_dir):
+    labels = load_ct_rate_labels(data_dir)
+    abnormalities = None if labels is None else labels.get(scan.image_path)
+    if labels is not None and abnormalities is None:
+        _warn_once(f"CT-RATE labels CSV has no row for {scan.image_path}; abnormalities set to null")
+    return {"dataset": "ct_rate", "class": None, "modality": "CT", "axial_plane": "axial",
+            "modality_subtype": None, "icd10_code": None, "abnormalities": abnormalities}
+
+
 def ground_truth(scan, reference_dir, data_dir):
-    """Metadata for the record's input.metadata. data_dir is unused for these datasets
-    (CT-RATE reads its labels from data_dir)."""
+    """Metadata for the record's input.metadata. IXI/MOLAB/MS come from the colleagues' reference files;
+    CT-RATE reads its abnormality labels from data_dir."""
+    if scan.dataset == "ct_rate":
+        return _ct_rate_truth(scan, data_dir)
     return dict(metadata_for(scan.image_path, load_reference(reference_dir, scan.dataset)))

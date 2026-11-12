@@ -23,8 +23,9 @@ def test_reference_has_colleague_files():
 
 def test_splits_json():
     s = json.loads((REPO / "splits.json").read_text())
-    assert {k: s["dev"][k] for k in ("ixi", "molab", "ms")} == {"ixi": ["IXI002"], "molab": ["010005N"], "ms": ["patient05"]}
+    assert s["dev"] == {"ixi": ["IXI002"], "molab": ["010005N"], "ms": ["patient05"], "ct_rate": ["valid_1"]}
     assert s["eval"]["molab"] == ["010020N", "010024N", "010029N"]
+    assert s["eval"]["ct_rate"] == ["valid_2", "valid_3", "valid_4"]
 
 
 def test_cli_prints_ok_or_missing(tmp_path):
