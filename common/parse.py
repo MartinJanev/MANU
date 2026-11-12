@@ -66,13 +66,23 @@ def parse_choice(text, options, style):
     low = text.lower()
     if all(o.lower() in low for o in options):
         return None
-    pattern = r"^\s*\(?([A-D])[.)\s]" if style == "A" else r"^\s*\(([a-d])\)"
-    m = re.match(pattern, text)
-    if m:
-        index = ord(m.group(1).lower()) - ord("a")
-        if index < len(options):
-            return index
     hits = [i for i, o in enumerate(options) if o.lower() in low]
+    index = None
+    if style == "A":
+        m = re.match(r"\s*\(?([A-D])(?:([.):])|\s*$|\s)", text)
+        if m:
+            letter = ord(m.group(1)) - ord("A")
+            punctuated = m.group(2) is not None or not text[m.end(1):].strip()
+            if punctuated or not hits or hits == [letter]:
+                index = letter
+            elif len(hits) == 1:
+                return None  # "A coronal slice": the article A, answer is another option
+    else:
+        m = re.match(r"\s*(?:\(([a-d])\)|([a-d])\.?\s*$)", text)
+        if m:
+            index = ord((m.group(1) or m.group(2))) - ord("a")
+    if index is not None and index < len(options):
+        return index
     return hits[0] if len(hits) == 1 else None
 
 

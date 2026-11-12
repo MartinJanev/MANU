@@ -42,6 +42,19 @@ def test_parse_choice():
     assert parse_choice("I don't know", OPTS, "A") is None
 
 
+def test_parse_choice_bare_letters():
+    assert parse_choice("B", OPTS, "A") == 1
+    assert parse_choice("B ", OPTS, "A") == 1
+    assert parse_choice("(c)", OPTS, "a") == 2
+    assert parse_choice("c", OPTS, "a") == 2
+    assert parse_choice("D: Oblique", OPTS, "A") == 3
+
+
+def test_parse_choice_article_is_not_a_letter():
+    assert parse_choice("A coronal slice", OPTS, "A") is None
+    assert parse_choice("A Axial view", OPTS, "A") == 0
+
+
 def test_extract_negation():
     v = extract_from_report("No evidence of metastasis. Unremarkable brain MRI.", "molab")
     assert (v["diagnosis_name"], v["modality"]) == ("normal", "MRI")
