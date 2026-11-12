@@ -14,6 +14,8 @@
 
 Употреба:  python3 -I evaluation/evaluate.py [--outputs reference] [--results results]
            python3 -I evaluation/evaluate.py --selftest
+           python3 -I evaluation/evaluate.py --split dev|eval [--results results] [--reference reference]
+                                             [--splits splits.json]   -> results/report_<split>.md
 """
 import argparse
 import collections
@@ -24,6 +26,12 @@ import sys
 from pathlib import Path
 
 MANU = Path(__file__).resolve().parent.parent
+if str(MANU) not in sys.path:  # the script runs with -I, which drops the script directory from sys.path
+    sys.path.insert(0, str(MANU))
+
+from common.datasets import DATASETS, load_splits, patient_id  # noqa: E402
+from common.schema import NUMERIC_KEYS, PARSED_KEYS  # noqa: E402
+
 TRUTH_DIAG = {"ixi": "normal", "molab": "tumor", "ms": "multiple sclerosis"}
 TRUTH_SEQ = {"ixi": "t1", "molab": "t1c+", "ms": "t1"}  # MOLAB: само 26/373 се именувани T1Gd!
 DIAG_VOCAB = ("normal", "tumor", "multiple sclerosis", "stroke", "other abnormalities")
@@ -151,6 +159,38 @@ def table(headers, rows):
     return out + ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
 
 
+# ---------------------------------------------------------------- делови од извештајот (споделени)
+def confusion_lines(runs, corner, caption):
+    L = []
+    for model, per_ds in runs.items():
+        counts = {d: collections.Counter(str(field(p, "diagnosis_name")) for _, p, _ in rs)
+                  for d, rs in per_ds.items()}
+        cols = sorted({c for cnt in counts.values() for c in cnt})
+        L += [f"**{model}** ({caption})", ""]
+        L += table([corner, *cols],
+                   [[f"{d} ({TRUTH_DIAG[d]})", *(counts[d][c] for c in cols)] for d in counts]) + [""]
+    return L
+
+
+def collapse_lines(runs, field_header):
+    L = []
+    for model, per_ds in runs.items():
+        rows = []
+        for f in FIELDS:
+            cells = []
+            for d in TRUTH_DIAG:
+                rs = per_ds.get(d)
+                if not rs:
+                    cells.append("—")
+                    continue
+                c = collections.Counter(str(field(p, f)) for _, p, _ in rs)
+                top, n = c.most_common(1)[0]
+                cells.append(f"{len(c)} · {100 * n / len(rs):.0f}% ({top})")
+            rows.append([f, *cells])
+        L += [f"**{model}**", ""] + table([field_header, "IXI", "MOLAB", "MS"], rows) + [""]
+    return L
+
+
 # ---------------------------------------------------------------- извештај
 def report(runs, probe_path):
     L = ["# Евалуација на моделите", ""]
@@ -180,31 +220,12 @@ def report(runs, probe_path):
 
     # 2. Матрици на конфузија
     L += ["## 2. Матрици на конфузија (дијагноза)", ""]
-    for model, per_ds in runs.items():
-        counts = {d: collections.Counter(str(field(p, "diagnosis_name")) for _, p, _ in rs)
-                  for d, rs in per_ds.items()}
-        cols = sorted({c for cnt in counts.values() for c in cnt})
-        L += [f"**{model}** (редови = вистина, колони = предвидено)", ""]
-        L += table(["вистина \\ модел", *cols],
-                   [[f"{d} ({TRUTH_DIAG[d]})", *(counts[d][c] for c in cols)] for d in counts]) + [""]
+    L += confusion_lines(runs, "вистина \\ модел", "редови = вистина, колони = предвидено")
 
     # 3. Колапс
     L += ["## 3. Колапс: колку различни одговори дава моделот?", "",
           "Ќелија = број на различни вредности · удел на најчестата (најчеста вредност).", ""]
-    for model, per_ds in runs.items():
-        rows = []
-        for f in FIELDS:
-            cells = []
-            for d in TRUTH_DIAG:
-                rs = per_ds.get(d)
-                if not rs:
-                    cells.append("—")
-                    continue
-                c = collections.Counter(str(field(p, f)) for _, p, _ in rs)
-                top, n = c.most_common(1)[0]
-                cells.append(f"{len(c)} · {100 * n / len(rs):.0f}% ({top})")
-            rows.append([f, *cells])
-        L += [f"**{model}**", ""] + table(["поле", "IXI", "MOLAB", "MS"], rows) + [""]
+    L += collapse_lines(runs, "поле")
 
     # 4. Описни полиња
     L += ["## 4. Описни полиња по збирка (проверки за пристрасност, не дискриминација)", "",
@@ -345,6 +366,185 @@ def probe_report(path):
     return L
 
 
+# ---------------------------------------------------------------- per-split evaluation (new model runs)
+SPLIT_ORDER = ("ixi", "molab", "ms", "ct_rate")
+FULL_SUFFIX = " (full run)"
+COLLEAGUES_MODE = "full_json (colleagues)"
+
+
+def _tag_dataset(name):
+    """'<model>_<tag>_processed.jsonl' (or _controls / _details) -> dataset key, None for an unknown tag."""
+    for suffix in ("_processed.jsonl", "_controls.jsonl", "_details.jsonl"):
+        if name.endswith(suffix):
+            stem = name[:-len(suffix)]
+            break
+    else:
+        return None
+    for dataset, spec in sorted(DATASETS.items(), key=lambda kv: -len(kv[1]["tag"])):
+        if stem.endswith("_" + spec["tag"]):
+            return dataset
+    return None
+
+
+def _split_patients(splits, split, dataset):
+    return set(splits.get(split, {}).get(dataset, []))
+
+
+def _read_jsonl(path):
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _run_files(directory, suffix="_processed.jsonl"):
+    """dataset -> path of the run files in one results/<model>/<split>/ directory."""
+    found = {}
+    for path in sorted(directory.glob("*" + suffix)):
+        dataset = _tag_dataset(path.name)
+        if dataset is not None:
+            found[dataset] = path
+    return found
+
+
+def _rows(path, keep=None):
+    rows = [(r["input"]["image_path"], r["output"].get("parsed_response"), r["input"]["metadata"])
+            for r in _read_jsonl(path)]
+    return rows if keep is None else [r for r in rows if keep(r[0])]
+
+
+def load_split(results, reference, split, splits):
+    """model -> dataset -> [(image_path, parsed_response, metadata)] for one split (datasets ixi, molab, ms, ct_rate).
+
+    Sources: results/<m>/<split>/; results/<m>/full/ filtered to the split's patients when the model has no
+    <split> directory (named "<m> (full run)"); reference/ filtered to the split's patients."""
+    results, reference = Path(results), Path(reference)
+    runs = collections.defaultdict(dict)
+
+    def add(model, dataset, path, filtered):
+        keep = (lambda image: patient_id(dataset, image) in _split_patients(splits, split, dataset)) \
+            if filtered else None
+        rows = _rows(path, keep)
+        if rows:
+            runs[model][dataset] = rows
+
+    for model_dir in sorted(p for p in results.iterdir() if p.is_dir()) if results.is_dir() else []:
+        if (model_dir / split).is_dir():
+            for dataset, path in _run_files(model_dir / split).items():
+                add(model_dir.name, dataset, path, False)
+        elif (model_dir / "full").is_dir():
+            for dataset, path in _run_files(model_dir / "full").items():
+                add(model_dir.name + FULL_SUFFIX, dataset, path, True)
+    for path in sorted(reference.glob("*_processed.jsonl")) if reference.is_dir() else []:
+        model, dataset = describe(path, "outputs")
+        add(model, dataset, path, True)
+    return {m: {d: per[d] for d in SPLIT_ORDER if d in per} for m, per in runs.items()}
+
+
+def _model_dir(results, model, split):
+    """Directory of a model's run files for this split, or None for a reference model."""
+    if model.endswith(FULL_SUFFIX):
+        path = Path(results) / model[:-len(FULL_SUFFIX)] / "full"
+    else:
+        path = Path(results) / model / split
+    return path if path.is_dir() else None
+
+
+def blank_agreement(results, model, split):
+    """Share of categorical fields where the blank-volume control equals the most common real value of the
+    dataset, averaged over the datasets that have a controls file. None without controls."""
+    directory = Path(results) / model / split
+    if not directory.is_dir():
+        return None
+    shares = []
+    for dataset, path in _run_files(directory, "_controls.jsonl").items():
+        processed = _run_files(directory).get(dataset)
+        controls = [r["output"]["parsed_response"] for r in _read_jsonl(path) if r["output"].get("parsed_response")]
+        real = [p for _, p, _ in _rows(processed) if p] if processed else []
+        if not controls or not real:
+            continue
+        keys = [k for k in PARSED_KEYS[dataset] if k not in NUMERIC_KEYS and k != "scan_name"]
+        hits = []
+        for key in keys:
+            common = collections.Counter(json.dumps(p.get(key)) for p in real).most_common(1)[0][0]
+            hits.append(json.dumps(controls[0].get(key)) == common)
+        shares.append(sum(hits) / len(hits))
+    return statistics.mean(shares) if shares else None
+
+
+def _median_seconds(directory):
+    if directory is None:
+        return None
+    seconds = [r["seconds"] for path in _run_files(directory, "_details.jsonl").values() for r in _read_jsonl(path)
+               if r.get("seconds") is not None and not str(r.get("image_path", "")).startswith("BLANK__")]
+    return statistics.median(seconds) if seconds else None
+
+
+def _mode(directory):
+    """Prompt mode from system_prompt_type ('full_json_v1' -> 'full_json'); colleagues' files have ''."""
+    for path in _run_files(directory).values() if directory else []:
+        for r in _read_jsonl(path):
+            kind = r["input"].get("system_prompt_type") or ""
+            return kind[:-3] if kind.endswith("_v1") else (kind or COLLEAGUES_MODE)
+    return COLLEAGUES_MODE
+
+
+def _is_valid(parsed):
+    return bool(parsed) and any(v is not None for k, v in parsed.items() if k != "scan_name")
+
+
+def _diag_acc(rows, dataset):
+    return sum(field(p, "diagnosis_name") == TRUTH_DIAG[dataset] for _, p, _ in rows) / len(rows)
+
+
+def _molab_patient_acc(rows):
+    """Majority vote of the diagnosis over each patient's scans (ties: first most common)."""
+    votes = collections.defaultdict(list)
+    for image, p, _ in rows:
+        votes[patient_id("molab", image)].append(field(p, "diagnosis_name"))
+    wins = [collections.Counter(v).most_common(1)[0][0] == TRUTH_DIAG["molab"] for v in votes.values()]
+    return sum(wins) / len(wins)
+
+
+def split_report(runs, results, split):
+    """Markdown lines: main table per model, then the confusion and collapse sections."""
+    scored = {m: {d: rs for d, rs in per.items() if d in TRUTH_DIAG and rs} for m, per in runs.items()}
+    rows = []
+    for model, per_ds in runs.items():
+        directory = _model_dir(results, model, split)
+        all_rows = [r for rs in per_ds.values() for r in rs]
+        mine = scored[model]
+        if set(mine) == set(TRUTH_DIAG):
+            t = [TRUTH_DIAG[d] for d, rs in mine.items() for _ in rs]
+            p = [field(pr, "diagnosis_name") for rs in mine.values() for _, pr, _ in rs]
+            pooled = pct(class_metrics(t, p)["bal_acc"])
+        else:
+            pooled = "—"
+        blank = None
+        if directory is not None:
+            blank = blank_agreement(results, directory.parent.name, directory.name)
+        seconds = _median_seconds(directory)
+        rows.append([model, _mode(directory), len(all_rows),
+                     pct(sum(_is_valid(p) for _, p, _ in all_rows) / len(all_rows)) if all_rows else "—",
+                     pct(_diag_acc(mine["ixi"], "ixi")) if "ixi" in mine else "—",
+                     pct(_diag_acc(mine["molab"], "molab")) if "molab" in mine else "—",
+                     pct(_molab_patient_acc(mine["molab"])) if "molab" in mine else "—",
+                     pct(_diag_acc(mine["ms"], "ms")) if "ms" in mine else "—",
+                     pooled, pct(blank), "—" if seconds is None else f"{seconds:.1f}"])
+    L = [f"# Evaluation: {split} split", "",
+         "Accuracy is the share of scans with the expected diagnosis (IXI normal, MOLAB tumor, MS multiple "
+         "sclerosis); MOLAB (patient majority) votes over each patient's scans. Pooled bal.acc covers "
+         "IXI+MOLAB+MS as one 3-class task (33.3% = no signal). Blank agreement = share of categorical "
+         "fields where the blank-volume control equals the most common real answer (high = image ignored).", ""]
+    L += table(["model", "mode", "records", "valid", "IXI acc", "MOLAB acc (scan)", "MOLAB acc (patient majority)",
+                "MS acc", "pooled bal.acc", "blank agreement", "median s/scan"], rows) + [""]
+    shown = {m: per for m, per in scored.items() if per}
+    L += ["## Confusion matrices (diagnosis)", ""]
+    L += confusion_lines(shown, "truth \\ model", "rows = truth, columns = predicted")
+    L += ["## Collapse: how many distinct answers does the model give?", "",
+          "Cell = number of distinct values · share of the most common (most common value).", ""]
+    L += collapse_lines(shown, "field")
+    return L
+
+
 # ---------------------------------------------------------------- self-check
 def selftest():
     t = ["normal"] * 4 + ["tumor"] * 4 + ["multiple sclerosis"] * 4
@@ -369,10 +569,22 @@ def main():
     ap.add_argument("--outputs", default=str(MANU / "reference"))
     ap.add_argument("--results", default=str(MANU / "results"))
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--split", choices=("dev", "eval"), help="per-split report of the new model runs")
+    ap.add_argument("--reference", help="colleagues' files (default: --outputs)")
+    ap.add_argument("--splits", default=str(MANU / "splits.json"))
     a = ap.parse_args()
     if a.selftest:
         return selftest()
     results = Path(a.results)
+    if a.split:
+        runs = load_split(results, Path(a.reference or a.outputs), a.split, load_splits(a.splits))
+        if not runs:
+            sys.exit(f"No runs for split {a.split} in {a.results} or {a.reference or a.outputs}")
+        text = "\n".join(split_report(runs, results, a.split)) + "\n"
+        results.mkdir(parents=True, exist_ok=True)
+        (results / f"report_{a.split}.md").write_text(text, encoding="utf-8")
+        print(text)
+        return
     runs = load_all(Path(a.outputs), results)
     if not runs:
         sys.exit(f"Нема излези во {a.outputs} или {a.results}")
