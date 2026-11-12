@@ -148,3 +148,32 @@ def test_main_parses_arguments(tmp, monkeypatch):
     runner.main(FakeAdapter(), ["--split", "dev", "--limit", "2", "--controls", "--ms-flair"])
     assert seen["split"] == "dev" and seen["limit"] == 2 and seen["controls"] and seen["ms_flair"]
     assert seen["datasets"] == ["ixi", "molab", "ms"] and seen["data_dir"] == "/data"
+
+
+class OddAdapter(FakeAdapter):
+    def __init__(self, result):
+        super().__init__()
+        self.result = result
+
+    def predict(self, scan, volumes):
+        return self.result
+
+
+@pytest.mark.parametrize("result", [(None, {}), ("not a dict", {}), ([1, 2], {})])
+def test_non_dict_raw_values_become_error_records(tmp, result):
+    _, out = go(tmp, OddAdapter(result))
+    for name, n in (("healthy", 1), ("brain_metastases", 2), ("ms", 1)):
+        recs = rows(out / f"fake_{name}_processed.jsonl")
+        assert len(recs) == n
+        assert all(r["output"]["error"] for r in recs)
+    details = rows(out / "fake_brain_metastases_details.jsonl")
+    assert len(details) == 2 and all(d["error"] for d in details)
+
+
+def test_non_json_serialisable_details_still_written(tmp):
+    adapter, out = go(tmp, OddAdapter(({"modality": "MRI"}, {"arr": np.zeros(2), "obj": object()})))
+    recs = rows(out / "fake_healthy_processed.jsonl")
+    assert len(recs) == 1 and not recs[0]["output"]["error"]
+    details = rows(out / "fake_healthy_details.jsonl")
+    assert len(details) == 1
+    assert "array" in details[0]["details"]["arr"]

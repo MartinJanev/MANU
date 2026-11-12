@@ -51,7 +51,7 @@ def _read_jsonl(path):
 
 def _append(path, row):
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.write(json.dumps(row, ensure_ascii=False, default=repr) + "\n")
 
 
 def _versions():
@@ -84,18 +84,18 @@ def _write_run_info(out_dir, adapter, name, split, datasets, ms_flair):
 def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
     """One scan through predict -> normalize -> build_record. Never raises: a failure becomes an error record."""
     start = time.time()
-    raw, details, error = {}, {}, None
+    raw, details, values, error = {}, {}, {}, None
     try:
         raw, details = adapter.predict(scan, volumes_fn())
+        values = normalize_values(scan.dataset, raw)
     except Exception as e:  # one bad scan or an OOM must not kill the job
         error = repr(e)
         if "torch" in sys.modules and sys.modules["torch"].cuda.is_available():
             sys.modules["torch"].cuda.empty_cache()
     seconds = round(time.time() - start, 1)
-    values = normalize_values(scan.dataset, raw) if not error else {}
     record = build_record(name, scan.dataset, adapter.mode, row_index, image_path, metadata, values, error)
     detail = {"image_path": image_path, "patient": scan.patient, "files": list(scan.files),
-              "seconds": seconds, "details": {"raw_values": raw, **(details or {})}, "error": error}
+              "seconds": seconds, "details": {"raw_values": raw, **(details if isinstance(details, dict) else {"adapter_details": details})}, "error": error}
     return record, detail, seconds
 
 
