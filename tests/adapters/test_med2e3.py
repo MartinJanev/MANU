@@ -10,8 +10,8 @@ import pytest
 from common.datasets import Scan
 from common.qna import BANK, ORIGINAL, format_mcq
 from common.volume import resize, to01
-from models.med2e3.run import (Med2E3Adapter, letter_probabilities, letter_token_ids, local_checkpoint,
-                               model_volume, preload_formatters)
+from models.med2e3.run import (Med2E3Adapter, letter_probabilities, letter_token_ids, load_text_mlp,
+                               local_checkpoint, model_volume, preload_formatters)
 
 
 def _scan(dataset="molab"):
@@ -22,8 +22,9 @@ def _volume():
     return np.random.default_rng(0).random((40, 64, 64), dtype=np.float32)
 
 
-def _run(monkeypatch, answer="A", probs=None, dataset="molab"):
+def _run(monkeypatch, answer="A", probs=None, dataset="molab", text_mlp_source=None):
     adapter = Med2E3Adapter()
+    adapter.text_mlp_source = text_mlp_source  # load() sets it
     calls = []
 
     def fake_generate(volume, prompt):
@@ -57,11 +58,48 @@ def test_prompt_prefix_and_style(monkeypatch):
 
 
 def test_interrogate_wired(monkeypatch):
-    values, details, _ = _run(monkeypatch, answer="A", probs=[0.7, 0.1, 0.1, 0.1])
+    values, details, _ = _run(monkeypatch, answer="A", probs=[0.7, 0.1, 0.1, 0.1], text_mlp_source="checkpoint")
     assert values["modality"] == "MRI"
     assert values["plane"] == "axial"
     assert details["modality"]["answers"][0]["raw"] == "A"
     assert details["modality"]["confidence"] == pytest.approx(0.7)
+    assert details["text_mlp_source"] == "checkpoint"
+
+
+def test_details_name_the_text_mlp_source_on_every_scan(monkeypatch):
+    for source in ("checkpoint", "random_seed0"):
+        _, details, _ = _run(monkeypatch, dataset="ms", text_mlp_source=source)
+        assert details["text_mlp_source"] == source
+        assert all(isinstance(v, dict) for k, v in details.items() if k != "text_mlp_source")  # field logs
+    assert Med2E3Adapter.text_mlp_source is None  # before load()
+
+
+class _FakeLinear:
+    def __init__(self):
+        self.loaded = []
+
+    def load_state_dict(self, state_dict, strict=True):
+        self.loaded.append((state_dict, strict))
+
+
+def test_text_mlp_loaded_strictly_from_the_connector_checkpoint():
+    weight, bias = np.ones((3, 2)), np.zeros(3)
+    state = {"_connector.0.weight": np.ones((3, 3)), "_connector.0.bias": np.ones(3),
+             "text_mlp.weight": weight, "text_mlp.bias": bias}
+    module = _FakeLinear()
+    assert load_text_mlp(state, module) == "checkpoint"
+    assert len(module.loaded) == 1
+    loaded, strict = module.loaded[0]
+    assert strict is True
+    assert set(loaded) == {"weight", "bias"}
+    assert loaded["weight"] is weight and loaded["bias"] is bias
+
+
+def test_text_mlp_keeps_seeded_init_without_checkpoint_keys():
+    module = _FakeLinear()
+    assert load_text_mlp({"_connector.0.weight": np.ones((3, 3))}, module) == "random_seed0"
+    assert load_text_mlp({}, module) == "random_seed0"  # no connector file
+    assert module.loaded == []
 
 
 def test_letter_probabilities_renormalised_over_the_four_letters():

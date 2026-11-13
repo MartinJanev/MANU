@@ -61,6 +61,22 @@ def letter_probabilities(scores, ids):
     return [float(p) for p in e / e.sum()]
 
 
+def load_text_mlp(connector_state, text_mlp):
+    """Load the TG-IS question projection from the vision3d connector's saved state dict, if it is there.
+
+    The repo's Connector.load_model restores only the `_connector.*` weights, although training saves every
+    connector parameter, so SpatialPoolingScore15Connector.text_mlp keeps its random initialisation. Keys are
+    selected the way the repo's get_w selects `_connector` (prefix up to "text_mlp." dropped) and loaded strictly.
+    Returns "checkpoint", or "random_seed0" if the state dict has no text_mlp keys (the init after seed 0 stays).
+    """
+    keyword = "text_mlp."
+    weights = {k.split(keyword, 1)[1]: v for k, v in connector_state.items() if keyword in k}
+    if not weights:
+        return "random_seed0"
+    text_mlp.load_state_dict(weights, strict=True)
+    return "checkpoint"
+
+
 def model_volume(volume, vision3d_preprocess):
     """The (1, 32, 256, 256) array through Med-2E3's eval transform (CropForeground, then Resize to 32x256x256).
 
@@ -116,6 +132,7 @@ class Med2E3Adapter:
     name = "med-2e3"
     model_id = "shiym2000/Med-2E3-M3D"
     mode = "qna_per_field"
+    text_mlp_source = None  # set by load(): "checkpoint" or "random_seed0"
 
     def load(self):
         import tempfile
@@ -133,8 +150,8 @@ class Med2E3Adapter:
         from src.data.text_preprocess import TextPreprocess
         from src.inference import load_model
 
-        # Seed 0 (global constraints). The TG-IS connector's text_mlp is not restored by the repo's loader, so it
-        # keeps its random initialisation; the seed makes it the same at every load (see NOTES.md).
+        # Seed 0 (global constraints): if the checkpoint has no text_mlp weights (below), its random initialisation
+        # is the same at every load.
         torch.manual_seed(0)
         # The training scripts set llm_attn_implementation=flash_attention_2; without flash-attn use SDPA, which
         # Phi3ForCausalLM supports in transformers 4.45.2.
@@ -142,6 +159,11 @@ class Med2E3Adapter:
         checkpoint = local_checkpoint(snapshot_download(self.model_id), tempfile.mkdtemp(prefix="med2e3_ckpt_"),
                                       attn_implementation)
         model = load_model(SimpleNamespace(resume_from_checkpoint=checkpoint, cache_dir_hf=None, llm_dtype=LLM_DTYPE))
+        # The TG-IS question projection, which load_model leaves at its random initialisation (see load_text_mlp)
+        connector_path = os.path.join(checkpoint, "vision3d_connector", "pytorch_model.bin")
+        connector_state = torch.load(connector_path, map_location="cpu") if os.path.exists(connector_path) else {}
+        self.text_mlp_source = load_text_mlp(connector_state, model.vision3d_connector.text_mlp)
+        print(f"{self.name}: TG-IS text_mlp from {self.text_mlp_source}", flush=True)
         # Stage 3 of inference(): the whole model on the GPU in the eval dtype
         model.to(device="cuda", dtype=torch.bfloat16)
         model.eval()
@@ -204,7 +226,8 @@ class Med2E3Adapter:
         def ask_fn(question):
             return self._generate(volume, IMAGE3D_PREFIX + question)
 
-        return interrogate(scan.dataset, ask_fn, "A")
+        values, log = interrogate(scan.dataset, ask_fn, "A")
+        return values, dict(log, text_mlp_source=self.text_mlp_source)  # field logs + where text_mlp came from
 
 
 if __name__ == "__main__":
