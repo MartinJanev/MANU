@@ -10,8 +10,8 @@ import pytest
 from common.datasets import Scan
 from common.qna import BANK, ORIGINAL, format_mcq
 from common.volume import resize, to01, to_pseudo_hu
-from models.medmvl3b.run import (MedMVLAdapter, answer_letter_probabilities, letter_probabilities, letter_token_ids,
-                                 local_checkpoint, model_input, model_volume, preload_formatters)
+from models.medmvl3b.run import (MedMVLAdapter, letter_probabilities, letter_token_ids, local_checkpoint, model_input,
+                                 model_volume, preload_formatters)
 
 
 def _scan(dataset="molab"):
@@ -22,7 +22,7 @@ def _volume():
     return np.random.default_rng(0).random((40, 64, 64), dtype=np.float32)
 
 
-def _run(monkeypatch, answer="(a) MRI", probs=None, dataset="molab", volume=None):
+def _run(monkeypatch, answer="A. MRI", probs=None, dataset="molab", volume=None):
     adapter = MedMVLAdapter()
     calls = []
 
@@ -64,14 +64,17 @@ def test_prompt_style(monkeypatch):
     assert len(calls) > 2
     for _, prompt in calls:
         assert prompt.startswith("<image3d>\n")
-        assert "(a) " in prompt and "(d) " in prompt
-        assert "Choices:" not in prompt
-    assert calls[0][1] == "<image3d>\n" + format_mcq(BANK["modality"], "a", ORIGINAL)
+        assert "Choices: A." in prompt and " D. " in prompt
+        assert "(a) " not in prompt
+    # M3D's close-ended format, the one MedM-VL-CT-3B-en was fine-tuned in
+    assert calls[0][1] == "<image3d>\n" + format_mcq(BANK["modality"], "A", ORIGINAL)
+    assert calls[0][1] == ("<image3d>\nWhat is the modality of this image? Choices: A. MRI B. CT C. X-ray "
+                           "D. Ultrasound")
 
 
-def test_parses_paren_letter(monkeypatch):
+def test_parses_choice_letter(monkeypatch):
     def answer(prompt):
-        return "(c) Coronal" if "Which plane" in prompt else "(a) MRI"
+        return "C. Coronal" if "Which plane" in prompt else "A. MRI"
 
     values, details, _ = _run(monkeypatch, answer=answer, probs=[0.1, 0.2, 0.6, 0.1])
     assert values["plane"] == "coronal"
@@ -91,38 +94,30 @@ def test_letter_probabilities_renormalised_over_the_four_letters():
     assert letter_probabilities(np.full(10, -np.inf), [3, 4, 5, 6]) is None
 
 
-def test_letter_probabilities_at_the_letter_after_the_opening_parenthesis():
-    first = np.zeros(10, dtype=np.float32)
-    second = np.full(10, -5.0, dtype=np.float32)
-    second[[3, 4, 5, 6]] = [0.0, 0.0, 3.0, 0.0]
-    probs = answer_letter_probabilities([1, 5, 2, 0], [first, second], 1, [3, 4, 5, 6])
-    assert probs == letter_probabilities(second, [3, 4, 5, 6])
-    assert int(np.argmax(probs)) == 2
-    # the answer does not start with " (": the letter position is unknown
-    assert answer_letter_probabilities([7, 5, 2], [first, second], 1, [3, 4, 5, 6]) is None
-    assert answer_letter_probabilities([1], [first], 1, [3, 4, 5, 6]) is None  # stopped after " ("
-
-
 class _BpeLikeTokenizer:
-    """Llama-3-style pieces: " (", the letter and ")" are separate tokens, one id per piece."""
+    """Llama-3-style pieces: "ASSISTANT", ":" and the space-prefixed letter " C" are separate tokens, one id each."""
 
-    def __init__(self, merge=None):
+    def __init__(self, merge=None, split=None):
         self.vocab = {}
-        self.merge = merge
+        self.merge = merge  # this text becomes one token
+        self.split = split  # this letter becomes " " + letter
 
     def __call__(self, text, add_special_tokens=True):
-        pieces = [text] if text == self.merge else re.findall(r"\w+:?| ?\(|\)", text)
+        pieces = [text] if text == self.merge else re.findall(r" ?\w+|[^\w\s]", text)
+        if self.split is not None and pieces[-1] == " " + self.split:
+            pieces[-1:] = [" ", self.split]
         ids = [self.vocab.setdefault(p, len(self.vocab) + 10) for p in pieces]
         return type("Encoding", (), {"input_ids": ids})()
 
 
-def test_letter_token_ids_follow_the_trained_answer_format():
+def test_letter_token_ids_are_the_first_answer_token_after_assistant():
     tok = _BpeLikeTokenizer()
-    open_id, ids = letter_token_ids(tok)
-    assert open_id == tok.vocab[" ("]
-    assert ids == [tok.vocab["a"], tok.vocab["b"], tok.vocab["c"], tok.vocab["d"]]
-    with pytest.raises(ValueError):
-        letter_token_ids(_BpeLikeTokenizer(merge="ASSISTANT: (b)"))
+    ids = letter_token_ids(tok)
+    assert ids == [tok.vocab[" A"], tok.vocab[" B"], tok.vocab[" C"], tok.vocab[" D"]]
+    with pytest.raises(ValueError):  # a letter merged with the prefix is not one token after "ASSISTANT:"
+        letter_token_ids(_BpeLikeTokenizer(merge="ASSISTANT: B"))
+    with pytest.raises(ValueError):  # nor is a letter that takes two tokens
+        letter_token_ids(_BpeLikeTokenizer(split="C"))
 
 
 def test_local_checkpoint_rewrites_cache_dir_and_attention(tmp_path):

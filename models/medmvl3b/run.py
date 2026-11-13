@@ -4,10 +4,10 @@ on M3D-Data): one four-option question per schema field through the shared quest
 The volume goes in as a (32, 256, 256) array in [-1000, 1000] (pseudo-HU for MRI, the clipped HU for CT-RATE),
 in place of the `.npy` that the repo's MultiModalDataset loads; the M3D-CLIP processor (lvlm/model/encoder/m3dclip.py)
 then min-max scales it to [0, 1], crops the foreground and resizes it to 32x256x256 again. Each question is
-"<image3d>\\n" + "{Q} (a) ... (d) ...", in the "llama3" conversation template; decoding is greedy (16 new tokens),
-and the letter probabilities come from the scores at the letter of an answer "(c) ...". Model code comes from the
-MedM-VL git clone (third_party/MedM-VL, at the commit whose config format the checkpoint has), weights from the
-Hugging Face snapshots.
+"<image3d>\\n" + M3D's close-ended format "{Q} Choices: A. ... D. ...", the format this checkpoint was fine-tuned
+in, in the "llama3" conversation template; decoding is greedy (16 new tokens), and the letter probabilities come
+from the scores of the first generated token. Model code comes from the MedM-VL git clone (third_party/MedM-VL, at
+the commit whose config format the checkpoint has), weights from the Hugging Face snapshots.
 
 Usage: sbatch -J medmvl3b jobs/run_model.sh medmvl3b --split dev|eval|full [--controls] [--limit N]
        (jobs/run_model.sh runs `python3 /manu/models/medmvl3b/run.py --split ...` inside the container)
@@ -26,12 +26,12 @@ from common.volume import resize, to01, to_pseudo_hu
 MEDMVL_REPO = "/third_party/MedM-VL"  # its modules import each other as `lvlm.*`, so the repo root goes on sys.path
 INPUT_SHAPE = (32, 256, 256)  # the processor's Resize target and M3D-CLIP's img_size
 IMAGE3D_TOKEN = "<image3d>"  # DEFAULT_IMAGE3D_TOKEN of lvlm/utils/constants.py
-IMAGE3D_PREFIX = IMAGE3D_TOKEN + "\n"  # as in the repo's inference examples
+IMAGE3D_PREFIX = IMAGE3D_TOKEN + "\n"  # as in the repo's inference examples (docs/example_inference.json)
 CONV_VERSION = "llama3"  # --conv_version of the CT-3B-en eval scripts (docs/param_interpretation.md: llama3)
 MODEL_DTYPE = "bfloat16"  # --model_dtype of the CT-3B-en eval scripts
 DEVICE = "cuda"
 MAX_NEW_TOKENS = 16
-LETTERS = "abcd"
+LETTERS = "ABCD"
 
 
 def model_input(volume, dataset):
@@ -56,26 +56,23 @@ def model_volume(volume, processor):
 
 
 def letter_token_ids(tokenizer):
-    """Token ids of " (" and of the letters a-d in an answer "ASSISTANT: (c) ...".
+    """Token ids of the answer letters A-D as the first token generated after "ASSISTANT:".
 
-    The llama3 template's generation prompt ends with "ASSISTANT:", and Llama-3's tokenizer splits " (c)" into
-    " (", "c", ")", so the letter is the second answer token.
+    The llama3 template trains answers as "ASSISTANT: C. ...<|eot_id|>" and the generation prompt ends with
+    "ASSISTANT:", so the first answer token is the letter with its leading space (Llama-3's " C").
     """
     prefix = tokenizer("ASSISTANT:", add_special_tokens=False).input_ids
-    opens, ids = set(), []
+    ids = []
     for letter in LETTERS:
-        full = tokenizer("ASSISTANT: (" + letter + ")", add_special_tokens=False).input_ids
-        if full[:len(prefix)] != prefix or len(full) != len(prefix) + 3:
-            raise ValueError(f"answer '({letter})' is not ' (', letter, ')' after 'ASSISTANT:': {full}")
-        opens.add(full[len(prefix)])
-        ids.append(full[len(prefix) + 1])
-    if len(opens) != 1:
-        raise ValueError(f"the opening parenthesis differs between letters: {opens}")
-    return opens.pop(), ids
+        full = tokenizer("ASSISTANT: " + letter, add_special_tokens=False).input_ids
+        if full[:len(prefix)] != prefix or len(full) != len(prefix) + 1:
+            raise ValueError(f"answer letter {letter} is not one token after 'ASSISTANT:': {full}")
+        ids.append(full[-1])
+    return ids
 
 
 def letter_probabilities(scores, ids):
-    """Softmax of one position's scores at the four letter ids, renormalised over the four.
+    """Softmax of the first generated position's scores, at the four letter ids, renormalised over the four.
 
     None if no letter has a finite score.
     """
@@ -84,18 +81,6 @@ def letter_probabilities(scores, ids):
         return None
     e = np.exp(letters - letters.max())
     return [float(p) for p in e / e.sum()]
-
-
-def answer_letter_probabilities(tokens, scores, open_id, letter_ids):
-    """Letter probabilities at the answer's letter position, from the generated tokens and the per-step scores.
-
-    The four answers "(a)" ... "(d)" share their first token " (", so renormalised over the four their
-    probabilities are those of the letter after " (": the scores of the second generated token. None if the answer
-    does not start with " (" and another token (then the second step's scores are not conditioned on " (").
-    """
-    if len(tokens) < 2 or len(scores) < 2 or tokens[0] != open_id:
-        return None
-    return letter_probabilities(scores[1], letter_ids)
 
 
 def preload_formatters(repo):
@@ -189,7 +174,7 @@ class MedMVLAdapter:
         self.template = TEMPlATE_FACTORY[CONV_VERSION]()
         self.processor = model.encoder_image3d.processor
         self.collator = DataCollatorForMultiModalDataset(tokenizer=model.tokenizer, mode="eval")
-        self.open_id, self.letter_ids = letter_token_ids(model.tokenizer)
+        self.letter_ids = letter_token_ids(model.tokenizer)
 
     def _generate(self, volume, prompt):
         import torch
@@ -220,10 +205,10 @@ class MedMVLAdapter:
                 return_dict_in_generate=True,
                 output_scores=True,
             )
+        # only the new tokens: the LLM got inputs_embeds, no input_ids
         answer = tokenizer.batch_decode(output.sequences, skip_special_tokens=True)[0]
-        tokens = output.sequences[0].tolist()  # only the new tokens: the LLM got inputs_embeds, no input_ids
-        scores = [s[0].float().cpu().numpy() for s in output.scores[:2]]
-        return answer, answer_letter_probabilities(tokens, scores, self.open_id, self.letter_ids)
+        first = output.scores[0][0].float().cpu().numpy()  # scores of the first generated token
+        return answer, letter_probabilities(first, self.letter_ids)
 
     def predict(self, scan, volumes):
         volume = model_input(volumes[0], scan.dataset)
@@ -231,7 +216,7 @@ class MedMVLAdapter:
         def ask_fn(question):
             return self._generate(volume, IMAGE3D_PREFIX + question)
 
-        return interrogate(scan.dataset, ask_fn, "a")  # (values, per-field log)
+        return interrogate(scan.dataset, ask_fn, "A")  # (values, per-field log)
 
 
 if __name__ == "__main__":
