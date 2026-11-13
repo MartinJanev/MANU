@@ -98,3 +98,95 @@ def test_model_dirs_complete():
             reqs = [l for l in (d / "requirements.txt").read_text().splitlines()
                     if l.strip() and not l.startswith("#")]
             assert all("==" in l or "@ git+" in l for l in reqs)
+
+
+def test_requirements_common_pins_nibabel():
+    reqs = [l.strip() for l in (REPO / "jobs" / "requirements_common.txt").read_text().splitlines()
+            if l.strip() and not l.startswith("#")]
+    assert "nibabel==5.3.3" in reqs
+    assert all("==" in l for l in reqs)
+
+
+def test_setup_env_dry_run_installs_common_requirements_and_checks_import(testmodel):
+    p = run(["bash", "jobs/setup_env.sh", "_testmodel"], env={"DRY_RUN": "1"})
+    assert p.returncode == 0, p.stderr
+    (install,) = [l for l in p.stdout.splitlines() if "pip install --user" in l]
+    # one pip call, the same torch pins for both files
+    assert "-c /pyuser/torch_pins.txt -r /manu/jobs/requirements_common.txt -r /manu/models/_testmodel/requirements.txt" \
+        in install
+    last = p.stdout.strip().splitlines()[-1]
+    assert last.startswith("singularity exec")
+    assert "env PYTHONPATH=/manu PYTHONUSERBASE=/pyuser python3 -c import models._testmodel.run" in last
+
+
+# ---------------------------------------------------------------------------
+# Real (not dry) runs in a scratch copy of the repo, with fake singularity / nvidia-smi on PATH.
+# ---------------------------------------------------------------------------
+FAKE_SINGULARITY = """#!/bin/bash
+echo "$*" >> "$FAKE_LOG"
+case "$*" in
+    *"pip freeze"*) echo "pkg==1.0"; exit 0 ;;
+    *"import models."*) exit "${FAKE_IMPORT_STATUS:-0}" ;;
+    *"run.py"*) exit "${FAKE_RUN_STATUS:-0}" ;;
+esac
+exit 0
+"""
+
+
+@pytest.fixture
+def scratch(tmp_path):
+    """A scratch repo with the job scripts and one model (no HF or git repos), and a bin/ of fakes."""
+    repo = tmp_path / "repo"
+    (repo / "jobs").mkdir(parents=True)
+    for f in ("run_model.sh", "setup_env.sh", "requirements_common.txt"):
+        shutil.copy(REPO / "jobs" / f, repo / "jobs" / f)
+    model = repo / "models" / "_t"
+    model.mkdir(parents=True)
+    (model / "env.sh").write_text("SIF=containers/fake.sif\nSIF_SOURCE=docker://example/image\n")
+    (model / "run.py").write_text("print('hi')\n")
+    (model / "requirements.txt").write_text("numpy==1.0\n")
+    (repo / "containers").mkdir()
+    (repo / "containers" / "fake.sif").write_text("")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("singularity", FAKE_SINGULARITY), ("nvidia-smi", "#!/bin/bash\nexit 0\n")):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    import os
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LOG": str(tmp_path / "calls.log")}
+    return repo, env, tmp_path / "calls.log"
+
+
+def test_setup_env_fails_when_the_adapter_does_not_import(scratch):
+    repo, env, log = scratch
+    p = run(["bash", str(repo / "jobs" / "setup_env.sh"), "_t"], env=dict(env, FAKE_IMPORT_STATUS="1"))
+    assert p.returncode != 0
+    assert "import models._t.run" in log.read_text()
+    assert "models/_t/run.py" in p.stderr
+    ok = run(["bash", str(repo / "jobs" / "setup_env.sh"), "_t"], env=env)
+    assert ok.returncode == 0, ok.stderr
+
+
+def test_run_model_writes_freeze_to_slurm_folder_even_when_run_fails(scratch):
+    repo, env, _ = scratch
+    p = run(["bash", str(repo / "jobs" / "run_model.sh"), "_t", "--split", "dev"],
+            env=dict(env, FAKE_RUN_STATUS="3", SLURM_JOB_NAME="lingshu"))
+    assert p.returncode == 3
+    freeze = repo / "results" / "slurm" / "lingshu_manual_freeze.txt"
+    assert freeze.read_text() == "pkg==1.0\n"
+    assert not (repo / "results" / "_t").exists()  # the runner makes results/<adapter name>/<split>/ itself
+
+
+def test_run_model_freeze_name_defaults_to_model(scratch):
+    repo, env, _ = scratch
+    p = run(["bash", str(repo / "jobs" / "run_model.sh"), "_t", "--split", "dev"], env=env)
+    assert p.returncode == 0, p.stderr
+    assert (repo / "results" / "slurm" / "_t_manual_freeze.txt").read_text() == "pkg==1.0\n"
+
+
+def test_run_model_dry_run_shows_freeze_path(testmodel):
+    p = run(["bash", "jobs/run_model.sh", "_testmodel", "--split", "dev"],
+            env={"DRY_RUN": "1", "SLURM_JOB_NAME": "x", "SLURM_JOB_ID": "42"})
+    assert p.returncode == 0, p.stderr
+    assert "> results/slurm/x_42_freeze.txt" in p.stdout
+    assert "requirements_freeze" not in p.stdout

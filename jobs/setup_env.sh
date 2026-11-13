@@ -44,10 +44,12 @@ if [ "$DRY_RUN" = 1 ] || [ ! -f "$SIF" ]; then
     run singularity pull "$SIF" "$SIF_SOURCE"
 fi
 
-# 2. Python packages into pyuser/<model>, torch pinned to the image's versions
+# 2. Python packages into pyuser/<model>: the shared pipeline's (jobs/requirements_common.txt) and the model's,
+#    torch pinned to the image's versions
 PINS=/pyuser/torch_pins.txt
 run "${EXEC[@]}" bash -c "pip list --format=freeze | grep -E '^(torch|torchvision|torchaudio)==' > $PINS \
-&& pip install --user --no-cache-dir -c $PINS -r /manu/models/$MODEL/requirements.txt"
+&& pip install --user --no-cache-dir -c $PINS -r /manu/jobs/requirements_common.txt \
+-r /manu/models/$MODEL/requirements.txt"
 
 # 3. Weights (offline in jobs, so fetch them here)
 for repo in ${HF_REPOS:-}; do
@@ -66,3 +68,7 @@ done
 
 # 5. Summary
 run "${EXEC[@]}" python3 -c "import torch, transformers; print('torch', torch.__version__, 'transformers', transformers.__version__)"
+
+# 6. The adapter must import in the image with these packages (as jobs/run_model.sh runs it), or every job fails
+run "${EXEC[@]}" env PYTHONPATH=/manu PYTHONUSERBASE=/pyuser python3 -c "import models.$MODEL.run" \
+    || { echo "ERROR: models/$MODEL/run.py does not import in $SIF with pyuser/$MODEL" >&2; exit 1; }

@@ -50,7 +50,7 @@ SINGULARITYENV_MANU_GIT_COMMIT=$(cat .manu_commit 2>/dev/null || echo unknown)
 export SINGULARITYENV_MANU_GIT_COMMIT
 
 if [ "$DRY_RUN" != 1 ]; then
-    mkdir -p results/slurm "results/$MODEL" "pyuser/$MODEL" third_party
+    mkdir -p results/slurm "pyuser/$MODEL" third_party
     echo "Job ${SLURM_JOB_ID:-local} ($MODEL) on $(hostname), start: $(date)"
 fi
 
@@ -61,13 +61,17 @@ CMD=(singularity exec --nv -B .:/manu -B ./data:/data -B ./results:/results -B .
      "$SIF" python3 "/manu/models/$MODEL/run.py" "$@")
 
 [ "$DRY_RUN" = 1 ] || nvidia-smi
-run "${CMD[@]}"
+status=0
+run "${CMD[@]}" || status=$?
 
+# The job's packages next to its log (the runner names results/<adapter name>/<split>/ itself), also after a failure
+FREEZE_FILE="results/slurm/${SLURM_JOB_NAME:-$MODEL}_${SLURM_JOB_ID:-manual}_freeze.txt"
 FREEZE=(singularity exec -B "./pyuser/$MODEL:/pyuser" "$SIF" pip freeze)
 if [ "$DRY_RUN" = 1 ]; then
     run "${FREEZE[@]}"
-    echo "  > results/$MODEL/requirements_freeze.txt"
+    echo "  > $FREEZE_FILE"
 else
-    "${FREEZE[@]}" > "results/$MODEL/requirements_freeze.txt"
-    echo "End: $(date)"
+    "${FREEZE[@]}" > "$FREEZE_FILE" || echo "WARNING: pip freeze failed" >&2
+    echo "End: $(date), exit status $status"
 fi
+exit "$status"

@@ -1,0 +1,4 @@
+# Packages of the shared pipeline (common/) that the NGC PyTorch image lacks; installed with every model's
+# requirements by jobs/setup_env.sh. numpy, scipy and Pillow are taken from the image (its torchvision needs
+# Pillow); the import check at the end of setup_env.sh fails if one of them is missing.
+nibabel==5.3.3
