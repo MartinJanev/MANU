@@ -1,0 +1,103 @@
+"""HealthGPT-Pro-27B (Qwen3.6-27B based medical MLLM; Apache-2.0): 10 axial slices as one video, full-JSON prompt.
+
+The calls follow the 3D-volume example of the model card (the same call sequence as inference/infer_3d_volume.py
+of github.com/ZJU4HealthCare/HealthGPT, written there for the Qwen3-VL based 4B/8B): the slices go in as one video
+of PIL frames (`"sample_fps": 2.0`), `process_vision_info` of qwen-vl-utils prepares it, the processor gets
+`do_resize=False`.
+The chat template's generation prompt ends with an open <think> (Qwen3.6 thinking mode, which the card does not
+turn off), so the decoded output starts inside the reasoning: only the text after the last </think> is parsed,
+and an output in which the reasoning never closes gives no values.
+
+Usage: sbatch -J healthgptpro27b jobs/run_model.sh healthgptpro27b --split dev|eval|full [--controls] [--limit N]
+       (jobs/run_model.sh runs `python3 /manu/models/healthgptpro27b/run.py --split ...` inside the container)
+"""
+from common import runner
+from common.parse import parse_json_answer
+from common.schema import full_prompt, slice_preface
+from common.volume import pick_slices, to01, to_rgb_images
+
+N_SLICES = 10
+IMAGE_SIZE = 448  # a multiple of 32 (patch 16 x merge 2): qwen-vl-utils keeps 448x448, 196 tokens per frame pair
+MAX_NEW_TOKENS = 2048  # it reasons in <think> before answering
+SAMPLE_FPS = 2.0  # the card's 3D example
+IMAGE_PATCH_SIZE = 16  # process_vision_info argument of the card (the vision tower's patch size)
+THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+
+
+def _answer_part(raw):
+    """Text after the last </think>, or None if the reasoning (opened by the generation prompt) never closes."""
+    text = THINK_OPEN + raw  # the <think> the chat template put at the end of the prompt
+    close = text.rfind(THINK_CLOSE)
+    if text.rfind(THINK_OPEN) > close:
+        return None  # generation stopped inside the reasoning: any JSON there is not an answer
+    return text[close + len(THINK_CLOSE):]
+
+
+class HealthGPTProAdapter:
+    name = "healthgpt-pro-27b"
+    model_id = "lintw/HealthGPT-Pro-27B"
+    mode = "full_json"
+
+    def load(self):
+        import torch
+        from transformers import AutoProcessor, Qwen3_5ForConditionalGeneration
+
+        # The card's loading code, on one GPU (the card: device_map="auto", flash_attention_2)
+        self.model = Qwen3_5ForConditionalGeneration.from_pretrained(
+            self.model_id,
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            device_map="cuda",
+        )
+        self.model.eval()
+        self.processor = AutoProcessor.from_pretrained(self.model_id)
+
+    def _generate(self, frames, text, max_new_tokens):
+        from qwen_vl_utils import process_vision_info
+
+        # The card's 3D-volume inference, with our frames and question
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "video", "video": frames, "sample_fps": SAMPLE_FPS},
+                {"type": "text", "text": text},
+            ],
+        }]
+        prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images, videos, video_kwargs = process_vision_info(
+            messages,
+            image_patch_size=IMAGE_PATCH_SIZE,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
+        videos, video_metadatas = zip(*videos)  # always one video here: (frames tensor, metadata)
+        videos, video_metadatas = list(videos), list(video_metadatas)
+        inputs = self.processor(
+            text=prompt,
+            images=images,
+            videos=videos,
+            video_metadata=video_metadatas,
+            return_tensors="pt",
+            do_resize=False,
+            **video_kwargs,
+        ).to(self.model.device)
+        generated = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, num_beams=1)
+        trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
+        return self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+    def predict(self, scan, volumes):
+        vol01 = to01(volumes[0], scan.dataset)
+        slices = pick_slices(vol01, N_SLICES)
+        frames = to_rgb_images(vol01, slices, IMAGE_SIZE)
+        text = slice_preface(N_SLICES) + full_prompt(scan.dataset)
+        raw = self._generate(frames, text, MAX_NEW_TOKENS)
+        answer = _answer_part(raw)
+        if answer is None:
+            obj, problems = None, ["truncated_think"]
+        else:
+            obj, problems = parse_json_answer(answer)
+        return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices}
+
+
+if __name__ == "__main__":
+    runner.main(HealthGPTProAdapter())
