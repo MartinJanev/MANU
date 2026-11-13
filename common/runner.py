@@ -5,9 +5,14 @@ else, so every model is scored from identical records.
 
 Output: <results>/<name>/<split>/
   <name>_<tag>_processed.jsonl   records in the colleagues' format (common.schema.build_record)
-  <name>_<tag>_details.jsonl     raw values, adapter details, timing and errors per scan
+  <name>_<tag>_details.jsonl     raw values, adapter details, timing, peak VRAM and errors per scan
   <name>_<tag>_controls.jsonl    with --controls: one blank-volume record per dataset (row_index -1)
   run_info.json                  model, split, versions, host, git commit
+
+Resume: a rerun skips the scans (and controls) already recorded without an error. Error rows are removed
+from the three files first and those scans are run again; a cut-off last line (a job killed mid-write) is
+dropped the same way. Resuming continues a run of the same code: after changing what a model outputs,
+move results/<name>/<split>/ to results/archive/ first.
 """
 import argparse
 import dataclasses
@@ -43,10 +48,43 @@ class Adapter(Protocol):
 
 
 def _read_jsonl(path):
+    """(rows, clean): clean is False when the last line does not parse (a cut-off write; that line is left out)
+    or the file does not end with a newline. Any other unparseable line raises."""
     if not os.path.exists(path):
-        return []
+        return [], True
     with open(path, encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
+        text = f.read()
+    lines = [line for line in text.splitlines() if line.strip()]
+    rows = []
+    for i, line in enumerate(lines):
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            if i < len(lines) - 1:
+                raise
+            print(f"{path}: dropped a cut-off last line", flush=True)
+            return rows, False
+    return rows, not text or text.endswith("\n")
+
+
+def _is_error(row):
+    """An error row of a processed/controls file (output.error) or of a details file (error)."""
+    return bool(row["output"].get("error") if "output" in row else row.get("error"))
+
+
+def _without_errors(path):
+    """The rows of path that are not errors; the file is rewritten (temp file + os.replace) if anything was
+    dropped, so the next append starts on a fresh line."""
+    rows, clean = _read_jsonl(path)
+    kept = [r for r in rows if not _is_error(r)]
+    if len(kept) < len(rows) or not clean:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(json.dumps(r, ensure_ascii=False, default=repr) + "\n" for r in kept)
+        os.replace(tmp, path)
+        if len(kept) < len(rows):
+            print(f"{os.path.basename(path)}: {len(rows) - len(kept)} error rows removed, to be retried", flush=True)
+    return kept
 
 
 def _append(path, row):
@@ -81,8 +119,24 @@ def _write_run_info(out_dir, adapter, name, split, datasets, ms_flair):
         json.dump(info, f, indent=2)
 
 
+def _cuda():
+    """torch.cuda if the adapter has imported torch and a GPU is there, else None (the runner never imports it)."""
+    try:
+        torch = sys.modules.get("torch")
+        return torch.cuda if torch is not None and torch.cuda.is_available() else None
+    except Exception:
+        return None
+
+
 def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
     """One scan through predict -> normalize -> build_record. Never raises: a failure becomes an error record."""
+    cuda, peak_vram_gb, measured = _cuda(), None, False
+    if cuda is not None:
+        try:  # best effort: the peak is only reported
+            cuda.reset_peak_memory_stats()
+            measured = True
+        except Exception:
+            pass
     start = time.time()
     raw, details, values, error = {}, {}, {}, None
     try:
@@ -90,17 +144,26 @@ def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
         values = normalize_values(scan.dataset, raw)
     except Exception as e:  # one bad scan or an OOM must not kill the job
         error = repr(e)
-        if "torch" in sys.modules and sys.modules["torch"].cuda.is_available():
-            sys.modules["torch"].cuda.empty_cache()
     seconds = round(time.time() - start, 1)
+    if measured:
+        try:
+            peak_vram_gb = round(cuda.max_memory_allocated() / 2**30, 1)
+        except Exception:
+            pass
+    if error and cuda is not None:
+        cuda.empty_cache()
     record = build_record(name, scan.dataset, adapter.mode, row_index, image_path, metadata, values, error)
     detail = {"image_path": image_path, "patient": scan.patient, "files": list(scan.files),
-              "seconds": seconds, "details": {"raw_values": raw, **(details if isinstance(details, dict) else {"adapter_details": details})}, "error": error}
+              "seconds": seconds, "peak_vram_gb": peak_vram_gb,
+              "details": {"raw_values": raw, **(details if isinstance(details, dict) else {"adapter_details": details})},
+              "error": error}
     return record, detail, seconds
 
 
 def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
         limit=None, controls=False, ms_flair=False):
+    if ms_flair and list(datasets) != ["ms"]:
+        raise ValueError(f"--ms-flair needs the datasets to be exactly ['ms'], got {list(datasets)}")
     name = adapter.name + ("-flair" if ms_flair else "")
     out_dir = Path(results_dir) / name / split
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -113,10 +176,13 @@ def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
         details_path = str(out_dir / f"{name}_{tag}_details.jsonl")
         controls_path = str(out_dir / f"{name}_{tag}_controls.jsonl")
         scans = find_scans(data_dir, dataset, split, splits, ms_flair=ms_flair)
-        done_rows = _read_jsonl(processed)
+        done_rows = _without_errors(processed)  # error rows (and a cut-off last line) are retried
+        _without_errors(details_path)
+        done_controls = _without_errors(controls_path)
         done = {r["input"]["image_path"] for r in done_rows}
         todo = [s for s in scans if s.image_path not in done][:limit]
-        need_control = bool(controls and scans and not _read_jsonl(controls_path))
+        need_control = bool(controls and scans and not done_controls)
+        next_index = max((r["processing"]["row_index"] for r in done_rows), default=-1) + 1
         print(f"{dataset}: {len(scans)} scans, {len(done)} already done, {len(todo)} to go"
               f"{', blank control to write' if need_control else ''}", flush=True)
         if not todo and not need_control:
@@ -128,14 +194,14 @@ def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
         def volumes_of(scan):
             return lambda: [load_canonical(p) for p in scan.files]
 
-        for row_index, scan in enumerate(todo, len(done_rows)):
+        for k, scan in enumerate(todo):
             metadata = ground_truth(scan, reference_dir, data_dir)
-            record, detail, seconds = _predict(adapter, name, scan, volumes_of(scan), row_index,
+            record, detail, seconds = _predict(adapter, name, scan, volumes_of(scan), next_index + k,
                                                scan.image_path, metadata)
             _append(processed, record)
             _append(details_path, detail)
             shown = record["output"]["error"] or (record["output"]["parsed_response"] or {}).get("diagnosis_name")
-            print(f"[{row_index + 1}/{len(scans)}] {scan.image_path} {seconds}s {shown}", flush=True)
+            print(f"[{len(done) + k + 1}/{len(scans)}] {scan.image_path} {seconds}s {shown}", flush=True)
 
         if need_control:
             first = scans[0]
@@ -170,6 +236,8 @@ def main(adapter, argv=None):
     unknown = [d for d in datasets if d not in DATASETS]
     if unknown:
         p.error(f"unknown datasets {unknown}; choose from {list(DATASETS)}")
+    if args.ms_flair and datasets != ["ms"]:
+        p.error("--ms-flair needs --datasets ms (FLAIR exists only for MS; results go under <model>-flair)")
     run(adapter, split=args.split, datasets=datasets, data_dir=args.data, reference_dir=args.reference,
         results_dir=args.results, splits=load_splits(args.splits), limit=args.limit,
         controls=args.controls, ms_flair=args.ms_flair)

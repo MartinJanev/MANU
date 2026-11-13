@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from pathlib import Path
 
 import nibabel as nib
@@ -37,6 +39,20 @@ class FakeAdapter:
     def predict(self, scan, volumes):
         self.seen.append((scan.image_path, volumes))
         if scan.patient == "IXI002":
+            raise RuntimeError("boom")
+        return {"modality": "MRI", "diagnosis_name": "tumor"}, {"raw": "x"}
+
+
+class FlakyAdapter(FakeAdapter):
+    """Fails on the scans whose image_path is in `fail` (blank controls included, by their BLANK__ path)."""
+
+    def __init__(self, fail=()):
+        super().__init__()
+        self.fail = set(fail)
+
+    def predict(self, scan, volumes):
+        self.seen.append((scan.image_path, volumes))
+        if scan.image_path in self.fail or ("BLANK" in self.fail and scan.image_path.startswith("BLANK__")):
             raise RuntimeError("boom")
         return {"modality": "MRI", "diagnosis_name": "tumor"}, {"raw": "x"}
 
@@ -90,7 +106,7 @@ def test_error_scan_is_recorded_and_run_continues(tmp):
 
 
 def test_resume_skips_done(tmp):
-    adapter, out = go(tmp)
+    adapter, out = go(tmp, FlakyAdapter())
     n = len(adapter.seen)
     go(tmp, adapter)
     assert len(adapter.seen) == n and adapter.loads == 1
@@ -100,8 +116,8 @@ def test_resume_skips_done(tmp):
 
 
 def test_controls_written_once(tmp):
-    adapter, out = go(tmp, controls=True)
-    adapter2, _ = go(tmp, controls=True)  # all real scans done: only controls would be missing -> none
+    adapter, out = go(tmp, FlakyAdapter(), controls=True)
+    adapter2, _ = go(tmp, FlakyAdapter(), controls=True)  # all real scans done: only controls would be missing -> none
     assert adapter2.seen == [] and adapter2.loads == 0
     for tag in ("healthy", "brain_metastases", "ms"):
         (rec,) = rows(out / f"fake_{tag}_controls.jsonl")
@@ -113,18 +129,34 @@ def test_controls_written_once(tmp):
 
 
 def test_controls_added_after_a_run_without_them(tmp):
-    go(tmp)
-    adapter, out = go(tmp, controls=True)
+    go(tmp, FlakyAdapter())
+    adapter, out = go(tmp, FlakyAdapter(), controls=True)
     assert adapter.loads == 1
     assert [p for p, _ in adapter.seen if not p.startswith("BLANK__")] == []
     assert len(rows(out / "fake_ms_controls.jsonl")) == 1
 
 
 def test_ms_flair_name_suffix(tmp):
-    adapter, out = go(tmp, ms_flair=True)
+    adapter, out = go(tmp, datasets=["ms"], ms_flair=True)
     assert out == Path(tmp["results"]) / "fake-flair" / "dev"
     rec = rows(out / "fake-flair_ms_processed.jsonl")[0]
     assert rec["api_response"]["model"] == "fake-flair"
+
+
+@pytest.mark.parametrize("datasets", [["ixi", "molab", "ms"], ["ixi", "ms"], ["ms", "ms"], []])
+def test_ms_flair_needs_exactly_ms(tmp, datasets):
+    with pytest.raises(ValueError, match="--ms-flair"):
+        go(tmp, datasets=datasets, ms_flair=True)
+    assert not Path(tmp["results"]).exists()
+
+
+def test_main_rejects_ms_flair_with_other_datasets(tmp, monkeypatch, capsys):
+    monkeypatch.setattr(runner, "run", lambda adapter, **kw: pytest.fail("run must not be called"))
+    monkeypatch.setattr(runner, "load_splits", lambda p: SPLITS)
+    for argv in (["--split", "dev", "--ms-flair"], ["--split", "dev", "--datasets", "ixi,ms", "--ms-flair"]):
+        with pytest.raises(SystemExit):
+            runner.main(FakeAdapter(), argv)
+        assert "--ms-flair" in capsys.readouterr().err
 
 
 def test_run_info(tmp):
@@ -145,9 +177,11 @@ def test_main_parses_arguments(tmp, monkeypatch):
     seen = {}
     monkeypatch.setattr(runner, "run", lambda adapter, **kw: seen.update(kw))
     monkeypatch.setattr(runner, "load_splits", lambda p: SPLITS)
-    runner.main(FakeAdapter(), ["--split", "dev", "--datasets", "ixi,molab,ms", "--limit", "2", "--controls", "--ms-flair"])
-    assert seen["split"] == "dev" and seen["limit"] == 2 and seen["controls"] and seen["ms_flair"]
+    runner.main(FakeAdapter(), ["--split", "dev", "--datasets", "ixi,molab,ms", "--limit", "2", "--controls"])
+    assert seen["split"] == "dev" and seen["limit"] == 2 and seen["controls"] and not seen["ms_flair"]
     assert seen["datasets"] == ["ixi", "molab", "ms"] and seen["data_dir"] == "/data"
+    runner.main(FakeAdapter(), ["--split", "dev", "--datasets", "ms", "--ms-flair"])
+    assert seen["ms_flair"] and seen["datasets"] == ["ms"]
 
 
 class OddAdapter(FakeAdapter):
@@ -177,3 +211,110 @@ def test_non_json_serialisable_details_still_written(tmp):
     details = rows(out / "fake_healthy_details.jsonl")
     assert len(details) == 1
     assert "array" in details[0]["details"]["arr"]
+
+
+# ---------------------------------------------------------------------------
+# Resume: error rows are retried, a truncated last line is dropped
+# ---------------------------------------------------------------------------
+def test_error_rows_are_retried_and_replaced(tmp):
+    _, out = go(tmp)  # FakeAdapter fails on IXI002
+    assert rows(out / "fake_healthy_processed.jsonl")[0]["output"]["status"] == "error"
+    adapter, _ = go(tmp, FlakyAdapter())
+    assert [p for p, _ in adapter.seen] == ["IXI002-Guys-0828-T1.nii.gz"]  # only the error row is redone
+    (ixi,) = rows(out / "fake_healthy_processed.jsonl")
+    assert ixi["output"]["status"] == "success" and ixi["output"]["error"] is None
+    (detail,) = rows(out / "fake_healthy_details.jsonl")
+    assert detail["error"] is None
+    assert not list(out.glob("*.tmp"))
+
+
+def test_row_index_continues_after_a_retry(tmp):
+    first = "010005N__010005_19010618_eTRA-3D-T1Gd_img.nii"
+    _, out = go(tmp, FlakyAdapter(fail=[first]))
+    assert [(r["input"]["image_path"] == first, r["processing"]["row_index"])
+            for r in rows(out / "fake_brain_metastases_processed.jsonl")] == [(True, 0), (False, 1)]
+    go(tmp, FlakyAdapter())
+    molab = rows(out / "fake_brain_metastases_processed.jsonl")
+    assert [r["processing"]["row_index"] for r in molab] == [1, 2]
+    assert molab[1]["input"]["image_path"] == first
+    assert all(r["output"]["status"] == "success" for r in molab)
+    assert len(rows(out / "fake_brain_metastases_details.jsonl")) == 2
+
+
+def test_failed_blank_control_is_retried(tmp):
+    _, out = go(tmp, FlakyAdapter(fail=["BLANK"]), controls=True)
+    assert rows(out / "fake_ms_controls.jsonl")[0]["output"]["status"] == "error"
+    adapter, _ = go(tmp, FlakyAdapter(), controls=True)
+    assert adapter.loads == 1
+    assert sorted(p for p, _ in adapter.seen) == sorted(
+        ["BLANK__IXI002-Guys-0828-T1.nii.gz", "BLANK__010005N__010005_19010618_eTRA-3D-T1Gd_img.nii",
+         "BLANK__patient05_T1.nii.gz"])
+    for tag in ("healthy", "brain_metastases", "ms"):
+        (control,) = rows(out / f"fake_{tag}_controls.jsonl")
+        assert control["output"]["status"] == "success"
+        assert not [d for d in rows(out / f"fake_{tag}_details.jsonl") if d["error"]]
+
+
+def test_truncated_last_line_is_dropped_and_its_scan_redone(tmp):
+    _, out = go(tmp, FlakyAdapter())
+    path = out / "fake_brain_metastases_processed.jsonl"
+    text = path.read_text(encoding="utf-8")
+    last = text.splitlines()[-1]
+    path.write_text(text[:len(text) - len(last) // 2 - 1], encoding="utf-8")  # a write cut off mid-line
+    details = out / "fake_brain_metastases_details.jsonl"
+    details.write_text(details.read_text(encoding="utf-8") + '{"image_path": "x", "sec', encoding="utf-8")
+    adapter, _ = go(tmp, FlakyAdapter())
+    assert len(adapter.seen) == 1
+    molab = rows(path)  # every line parses
+    assert len(molab) == 2 and len({r["input"]["image_path"] for r in molab}) == 2
+    assert [r["processing"]["row_index"] for r in molab] == [0, 1]
+    assert len(rows(details)) == 3  # both originals and the redone scan; the cut line is gone
+
+
+def test_unparseable_line_inside_a_file_still_raises(tmp):
+    _, out = go(tmp, FlakyAdapter())
+    path = out / "fake_brain_metastases_processed.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("not json\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        go(tmp, FlakyAdapter())
+
+
+# ---------------------------------------------------------------------------
+# Peak VRAM per scan (torch faked: the test venv has none)
+# ---------------------------------------------------------------------------
+class FakeCuda:
+    def __init__(self, peak=3.46 * 2**30, fail=False):
+        self.peak, self.fail, self.resets = peak, fail, 0
+
+    def is_available(self):
+        return True
+
+    def reset_peak_memory_stats(self):
+        self.resets += 1
+
+    def max_memory_allocated(self):
+        if self.fail:
+            raise RuntimeError("no CUDA context")
+        return int(self.peak)
+
+    def empty_cache(self):
+        pass
+
+
+def test_peak_vram_in_details(tmp, monkeypatch):
+    cuda = FakeCuda()
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=cuda))
+    _, out = go(tmp, controls=True)  # FakeAdapter: IXI002 fails, the rest succeed
+    details = [d for f in sorted(out.glob("*_details.jsonl")) for d in rows(f)]
+    assert len(details) == 7 and cuda.resets == 7  # 4 scans + 3 controls
+    assert all(d["peak_vram_gb"] == 3.5 for d in details)
+
+
+def test_peak_vram_none_without_torch_or_on_failure(tmp, monkeypatch):
+    _, out = go(tmp)
+    assert all(d["peak_vram_gb"] is None for d in rows(out / "fake_ms_details.jsonl"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=FakeCuda(fail=True)))
+    _, out = go(tmp, FlakyAdapter(), datasets=["ms"], split="dev", results_dir=tmp["results"] + "2")
+    (detail,) = rows(out / "fake_ms_details.jsonl")
+    assert detail["peak_vram_gb"] is None and detail["error"] is None
