@@ -31,6 +31,10 @@ import numpy as np
 from common.datasets import DATASETS, Scan, find_scans, ground_truth, load_splits
 from common.schema import build_record, normalize_values
 from common.volume import load_canonical
+from common.torch_compat import alias_transform_get_item_to_index
+
+# Before any adapter imports transformers: the NGC 24.12 image's torch needs it (see common/torch_compat.py)
+alias_transform_get_item_to_index()
 
 MODES = ("full_json", "qna_per_field", "findings_then_extract", "clip_or_heads")
 

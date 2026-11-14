@@ -30,4 +30,5 @@ Extra run on the training sequence: `sbatch -J braingemma3d jobs/run_model.sh br
 
 ## Pitfalls
 
+- Job 2555 (dev, 2026-11-14) stopped in `load()`: transformers 4.57.3 imports `TransformGetItemToIndex` from `torch._dynamo._trace_wrapped_higher_order_op`, which the image's 2.6.0a0 lacks (it has the class in `torch._higher_order_ops.flex_attention`). `common/torch_compat.py` aliases it.
 - The prompt names FLAIR, so `specialized_sequence` = FLAIR in a report is an echo of the prompt, not a reading of the image.

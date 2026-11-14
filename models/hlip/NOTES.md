@@ -38,3 +38,5 @@ Before running: `setup_env.sh` fetches both HF repos and clones HLIP. Licence of
 ## Eval run
 
 ## Pitfalls
+
+- Job 2554 (dev, 2026-11-14) stopped in `load()`: transformers 4.57.6 imports `TransformGetItemToIndex` from `torch._dynamo._trace_wrapped_higher_order_op`, which the image's 2.6.0a0 lacks (it has the class in `torch._higher_order_ops.flex_attention`); open_clip's `hf_model.py` turns the ImportError into "Please `pip install transformers`". `common/torch_compat.py` aliases it; the CPU smoke test with torch 2.6.0 (release) could not show this.
