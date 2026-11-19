@@ -318,3 +318,64 @@ def test_peak_vram_none_without_torch_or_on_failure(tmp, monkeypatch):
     _, out = go(tmp, FlakyAdapter(), datasets=["ms"], split="dev", results_dir=tmp["results"] + "2")
     (detail,) = rows(out / "fake_ms_details.jsonl")
     assert detail["peak_vram_gb"] is None and detail["error"] is None
+
+
+# --- fresh runs and run_info history -------------------------------------------------------------------------
+
+def test_fresh_archives_previous_results_and_runs_everything_again(tmp):
+    first, out = go(tmp, FlakyAdapter(), controls=True)
+    old = {f.name: f.read_text() for f in out.iterdir()}
+    started = json.loads((out / "run_info.json").read_text())["started"]
+    second, out2 = go(tmp, FlakyAdapter(), controls=True, fresh=True)
+    assert out2 == out
+    assert sorted(p for p, _ in second.seen) == sorted(p for p, _ in first.seen)  # nothing skipped
+    archived = list((Path(tmp["results"]) / "archive" / "fake").iterdir())
+    assert [a.name for a in archived] == ["dev_" + started[:19].replace(":", "-")]
+    assert {f.name: f.read_text() for f in archived[0].iterdir()} == old
+    assert json.loads((out / "run_info.json").read_text())["started"] != started
+
+
+def test_fresh_twice_keeps_both_archives(tmp):
+    go(tmp, FlakyAdapter())
+    go(tmp, FlakyAdapter(), fresh=True)
+    go(tmp, FlakyAdapter(), fresh=True)
+    assert len(list((Path(tmp["results"]) / "archive" / "fake").iterdir())) == 2
+
+
+def test_fresh_without_previous_results_is_a_plain_run(tmp):
+    adapter, out = go(tmp, FlakyAdapter(), fresh=True)
+    assert len(adapter.seen) == 4
+    assert not (Path(tmp["results"]) / "archive").exists()
+
+
+def test_resume_keeps_the_first_run_info_and_logs_the_resume(tmp, monkeypatch, capsys):
+    monkeypatch.setenv("MANU_GIT_COMMIT", "aaaaaaa")
+    _, out = go(tmp, FlakyAdapter())
+    first = json.loads((out / "run_info.json").read_text())
+    monkeypatch.setenv("MANU_GIT_COMMIT", "bbbbbbb")
+    capsys.readouterr()
+    go(tmp, FlakyAdapter())
+    info = json.loads((out / "run_info.json").read_text())
+    assert info["started"] == first["started"] and info["git_commit"] == "aaaaaaa"
+    assert [r["git_commit"] for r in info["resumed"]] == ["bbbbbbb"]
+    printed = capsys.readouterr().out
+    assert "--fresh" in printed and "aaaaaaa" in printed and "Nothing to run" in printed
+
+
+def test_main_passes_fresh(tmp, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(runner, "run", lambda adapter, **kw: seen.update(kw))
+    monkeypatch.setattr(runner, "load_splits", lambda p: SPLITS)
+    runner.main(FakeAdapter(), ["--split", "dev"])
+    assert seen["fresh"] is False
+    runner.main(FakeAdapter(), ["--split", "dev", "--fresh"])
+    assert seen["fresh"] is True
+
+
+def test_run_info_of_a_run_that_recorded_nothing_is_replaced(tmp):
+    out = Path(tmp["results"]) / "fake" / "dev"
+    out.mkdir(parents=True)
+    (out / "run_info.json").write_text(json.dumps({"started": "2026-01-01T00:00:00", "git_commit": "old"}))
+    go(tmp, FlakyAdapter())
+    info = json.loads((out / "run_info.json").read_text())
+    assert info["started"] != "2026-01-01T00:00:00" and "resumed" not in info

@@ -43,6 +43,18 @@ sbatch -J <model> jobs/run_model.sh <model> --split eval --controls
 Results go to `results/<model>/<split>/`. Score them locally with
 `python3 -I evaluation/evaluate.py --split dev`.
 
+A rerun **resumes**: scans that already have a result are skipped (the log says `N already done`, and
+`Nothing to run` if the model was never loaded). To run again after changing code, prompts or packages, or to
+repeat an experiment, add `--fresh`. It moves the old `results/<model>/<split>/` to
+`results/archive/<model>/<split>_<start time>/` and runs every scan:
+
+```
+sbatch -J <model> jobs/run_model.sh <model> --split eval --controls --fresh
+```
+
+Resubmit a job that was killed half-way *without* `--fresh`, so it continues where it stopped.
+`run_info.json` keeps the first run's start time and commit; each resume is listed under `resumed`.
+
 ## Cluster sync
 
 EduVPN on. From the Mac (never deletes on the cluster; `RSYNC_DRY=1` for a dry run,

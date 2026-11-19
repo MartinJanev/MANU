@@ -11,3 +11,4 @@ __pycache__/
 .DS_Store
 .manu_commit
 .superpowers/
+.pytest_cache/

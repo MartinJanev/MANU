@@ -9,10 +9,14 @@ Output: <results>/<name>/<split>/
   <name>_<tag>_controls.jsonl    with --controls: one blank-volume record per dataset (row_index -1)
   run_info.json                  model, split, versions, host, git commit
 
-Resume: a rerun skips the scans (and controls) already recorded without an error. Error rows are removed
-from the three files first and those scans are run again; a cut-off last line (a job killed mid-write) is
-dropped the same way. Resuming continues a run of the same code: after changing what a model outputs,
-move results/<name>/<split>/ to results/archive/ first.
+Resume (the default): a rerun skips the scans (and controls) already recorded without an error. Error rows are
+removed from the three files first and those scans are run again; a cut-off last line (a job killed mid-write) is
+dropped the same way. Resuming continues a run of the same code; run_info.json keeps the first run's start time and
+commit and lists every resume under "resumed".
+
+--fresh: to run again after changing code, prompts or packages (or to repeat an experiment), the existing
+<results>/<name>/<split>/ is first moved to <results>/archive/<name>/<split>_<its start time>/, then every scan
+runs. fetch_results.sh does not copy archive/.
 """
 import argparse
 import dataclasses
@@ -106,21 +110,53 @@ def _versions():
     return versions
 
 
+def _read_run_info(out_dir):
+    try:
+        with open(out_dir / "run_info.json", encoding="utf-8") as f:
+            info = json.load(f)
+        return info if isinstance(info, dict) and "started" in info else None
+    except (OSError, ValueError):
+        return None
+
+
 def _write_run_info(out_dir, adapter, name, split, datasets, ms_flair):
-    info = {
-        "model": name,
-        "model_id": adapter.model_id,
-        "mode": adapter.mode,
-        "split": split,
-        "datasets": list(datasets),
-        "ms_flair": ms_flair,
+    """A new run writes run_info.json; a resume keeps it (the first run's start and commit) and appends itself
+    to "resumed", so the file always says when and with which code the recorded scans were started."""
+    this = {
         "started": datetime.datetime.now().isoformat(),
         "host": socket.gethostname(),
         "git_commit": os.environ.get("MANU_GIT_COMMIT"),
         "versions": _versions(),
     }
-    with open(out_dir / "run_info.json", "w", encoding="utf-8") as f:
+    # a run that recorded no scan (e.g. it failed in load()) is not resumed: its run_info is replaced
+    previous = _read_run_info(out_dir) if any(out_dir.glob("*.jsonl")) else None
+    if previous is None:
+        info = {"model": name, "model_id": adapter.model_id, "mode": adapter.mode, "split": split,
+                "datasets": list(datasets), "ms_flair": ms_flair, **this}
+    else:
+        info = previous
+        info.setdefault("resumed", []).append({"datasets": list(datasets), **this})
+    tmp = out_dir / "run_info.json.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2)
+    os.replace(tmp, out_dir / "run_info.json")
+    return previous
+
+
+def _archive_previous(out_dir, results_dir, name, split):
+    """--fresh: move an existing <results>/<name>/<split>/ to <results>/archive/<name>/<split>_<its start time>/
+    (never overwriting an earlier archive). Returns the new path, or None if there was nothing to move."""
+    if not out_dir.is_dir() or not any(out_dir.iterdir()):
+        return None
+    info = _read_run_info(out_dir) or {}
+    stamp = str(info.get("started") or datetime.datetime.now().isoformat())[:19].replace(":", "-")
+    parent = Path(results_dir) / "archive" / name
+    dest, k = parent / f"{split}_{stamp}", 2
+    while dest.exists():
+        dest, k = parent / f"{split}_{stamp}_{k}", k + 1
+    parent.mkdir(parents=True, exist_ok=True)
+    os.rename(out_dir, dest)  # both under <results>: one filesystem
+    return dest
 
 
 def _cuda():
@@ -165,14 +201,23 @@ def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
 
 
 def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
-        limit=None, controls=False, ms_flair=False):
+        limit=None, controls=False, ms_flair=False, fresh=False):
     if ms_flair and list(datasets) != ["ms"]:
         raise ValueError(f"--ms-flair needs the datasets to be exactly ['ms'], got {list(datasets)}")
     name = adapter.name + ("-flair" if ms_flair else "")
     out_dir = Path(results_dir) / name / split
+    if fresh:
+        moved = _archive_previous(out_dir, results_dir, name, split)
+        print(f"--fresh: previous results moved to {moved}" if moved else f"--fresh: no previous results in {out_dir}",
+              flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    _write_run_info(out_dir, adapter, name, split, datasets, ms_flair)
+    previous = _write_run_info(out_dir, adapter, name, split, datasets, ms_flair)
+    if previous is not None:
+        print(f"Resuming {out_dir}: started {previous['started'][:19]}, commit {previous.get('git_commit')}. "
+              f"Scans already recorded keep those outputs; add --fresh to archive them and run everything again.",
+              flush=True)
     loaded = False
+    ran = 0
 
     for dataset in datasets:
         tag = DATASETS[dataset]["tag"]
@@ -206,6 +251,7 @@ def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
             _append(details_path, detail)
             shown = record["output"]["error"] or (record["output"]["parsed_response"] or {}).get("diagnosis_name")
             print(f"[{len(done) + k + 1}/{len(scans)}] {scan.image_path} {seconds}s {shown}", flush=True)
+            ran += 1
 
         if need_control:
             first = scans[0]
@@ -221,6 +267,10 @@ def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
             _append(details_path, detail)
             shown = record["output"]["error"] or (record["output"]["parsed_response"] or {}).get("diagnosis_name")
             print(f"[control] {blank_path} {seconds}s {shown}", flush=True)
+            ran += 1
+    if not ran:
+        print(f"Nothing to run: every scan already has a result in {out_dir}. "
+              f"The model was not loaded. Add --fresh to archive these results and run again.", flush=True)
     return out_dir
 
 
@@ -231,6 +281,9 @@ def main(adapter, argv=None):
     p.add_argument("--limit", type=int, default=None, help="only the first N unfinished scans per dataset")
     p.add_argument("--controls", action="store_true", help="also write one blank-volume control per dataset")
     p.add_argument("--ms-flair", action="store_true", help="feed FLAIR instead of T1 for MS (results under <model>-flair)")
+    p.add_argument("--fresh", action="store_true",
+                   help="move existing results/<model>/<split>/ to results/archive/ and run every scan again "
+                        "(without it, a rerun resumes and skips scans already recorded)")
     p.add_argument("--data", default="/data")
     p.add_argument("--reference", default="/reference")
     p.add_argument("--results", default="/results")
@@ -244,4 +297,4 @@ def main(adapter, argv=None):
         p.error("--ms-flair needs --datasets ms (FLAIR exists only for MS; results go under <model>-flair)")
     run(adapter, split=args.split, datasets=datasets, data_dir=args.data, reference_dir=args.reference,
         results_dir=args.results, splits=load_splits(args.splits), limit=args.limit,
-        controls=args.controls, ms_flair=args.ms_flair)
+        controls=args.controls, ms_flair=args.ms_flair, fresh=args.fresh)
