@@ -20,7 +20,7 @@ from common.volume import resize, to01
 INPUT_SHAPE = (32, 256, 256)  # the only shape the card's convert_npy_to_images accepts
 N_SLICES = 11
 IMAGE_SIZE = 448
-MAX_NEW_TOKENS = 2048  # it reasons in <think> before answering (the card's 3D example uses 1024)
+MAX_NEW_TOKENS = 4096  # it reasons in <think> before answering; 2048 cut 8/32 eval answers (the card's 3D example: 1024)
 THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)

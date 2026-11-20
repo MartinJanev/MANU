@@ -7,7 +7,7 @@ from common.datasets import Scan
 from common.schema import full_prompt, slice_preface
 from models.healthgptpro27b.run import HealthGPTProAdapter
 
-# The chat template's generation prompt ends with an open "<think>\n" (Qwen3.6 thinking mode), so the decoded
+# When the chat template's generation prompt ends with an open "<think>\n" (Qwen3.6 thinking mode), the decoded
 # output starts inside the reasoning and closes it with </think> before the answer.
 REASONING = 'Axial T1 MRI. A draft: {"diagnosis_name": "healthy"}; but a {ring-enhancing} lesion is seen.\n</think>\n\n'
 FENCED = '```json\n{"diagnosis_name": "tumor", "modality": "MRI"}\n```'
@@ -21,13 +21,13 @@ def _volume():
     return np.random.default_rng(0).random((40, 64, 64), dtype=np.float32)
 
 
-def _run(monkeypatch, output, dataset="molab"):
+def _run(monkeypatch, output, dataset="molab", opened=True):
     adapter = HealthGPTProAdapter()
     calls = []
 
     def fake_generate(frames, text, max_new_tokens):
         calls.append((frames, text, max_new_tokens))
-        return output
+        return output, opened
 
     monkeypatch.setattr(adapter, "_generate", fake_generate)
     values, details = adapter.predict(_scan(dataset), [_volume()])
@@ -46,7 +46,7 @@ class _Inputs(dict):
         return self["input_ids"]
 
 
-def _run_generate(monkeypatch, decoded):
+def _run_generate(monkeypatch, decoded, template="<prompt><think>\n"):
     """predict() through the real _generate, with the processor, model and qwen_vl_utils replaced by recorders."""
     log = {}
 
@@ -57,7 +57,7 @@ def _run_generate(monkeypatch, decoded):
     class Processor:
         def apply_chat_template(self, messages, **kwargs):
             log["template"] = (messages, kwargs)
-            return "<prompt>"
+            return template
 
         def __call__(self, **kwargs):
             log["processor"] = kwargs
@@ -103,7 +103,7 @@ def test_card_video_pipeline_and_greedy_2048(monkeypatch):
     values, details, log = _run_generate(monkeypatch, REASONING + FENCED)
     assert log["vision"][1] == {"image_patch_size": 16, "return_video_kwargs": True, "return_video_metadata": True}
     assert log["processor"] == {
-        "text": "<prompt>",
+        "text": "<prompt><think>\n",
         "images": None,
         "videos": ["video-tensor"],
         "video_metadata": [{"fps": 2.0, "frames_indices": list(range(10))}],
@@ -147,3 +147,15 @@ def test_answer_without_json_is_empty_with_problem(monkeypatch):
     values, details, _ = _run(monkeypatch, "Looked at it.\n</think>\n\nI cannot tell.")
     assert values == {}
     assert details["problems"] == ["no_json"]
+
+
+def test_prompt_without_think_parses_the_whole_answer(monkeypatch):
+    # job 2762: the template did not open <think>, the model answered with plain JSON
+    values, details, _ = _run_generate(monkeypatch, '{"diagnosis_name": "tumor", "modality": "MRI"}', template="<prompt>")
+    assert values == {"diagnosis_name": "tumor", "modality": "MRI"}
+    assert details["problems"] == [] and details["think_opened"] is False
+
+
+def test_open_think_in_the_prompt_is_reported(monkeypatch):
+    _, details, _ = _run_generate(monkeypatch, REASONING + FENCED)
+    assert details["think_opened"] is True

@@ -55,9 +55,9 @@ def test_parses_answer_tag(monkeypatch):
     assert details["raw"] == raw
 
 
-def test_max_new_tokens_2048(monkeypatch):
+def test_max_new_tokens_4096(monkeypatch):
     _, _, calls = _run(monkeypatch, ANSWER)
-    assert calls[0][2] == 2048
+    assert calls[0][2] == 4096
 
 
 def test_prompt_is_reasoning_prompt_then_11_images_then_question(monkeypatch):

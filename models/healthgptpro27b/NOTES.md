@@ -47,6 +47,11 @@ Before running: no gating is shown on the card (if the download asks for a token
 
 ## Eval run
 
+- Job 2762 (2026-11-20): all 32 answers `truncated_think`, about 10 s per scan, peak 51.7 GB. `details.raw` is plain
+  JSON with no `<think>` or `</think>`: the template did not open a reasoning block, but `_answer_part` assumed it
+  had. `_generate` now reports whether the prompt ended in `<think>` (`details.think_opened`); the saved answers were
+  re-scored with `python3 -I tools/reparse.py healthgpt-pro-27b eval` (and `dev`), no GPU rerun.
+
 ## Pitfalls
 
 - Peak VRAM to check (expected ≈ 55–60 GB of 80 GB): on OOM, record it here rather than quantizing.

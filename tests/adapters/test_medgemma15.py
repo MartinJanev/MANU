@@ -148,3 +148,17 @@ def test_load_reads_the_local_snapshot_not_the_hub_id(monkeypatch):
     MedGemma15Adapter().load()
     local = "/hf_cache/hub/snap/google/medgemma-1.5-4b-it"
     assert seen == [("processor", local), ("model", local)]
+
+
+def test_report_answer_is_read_with_the_report_extractor(monkeypatch):
+    # dev run (job 2759): a report instead of the JSON
+    report = ("FINDINGS:\nThe brain parenchyma appears normal. No evidence of mass, hemorrhage, or infarct. "
+              "IMPRESSION:\nNormal brain MRI.")
+    values, details, _ = _run(monkeypatch, report)
+    assert values["diagnosis_name"] == "normal" and values["modality"] == "MRI"
+    assert details["parsed_from"] == "report" and details["problems"] == ["no_json"]
+
+
+def test_json_answer_is_marked_as_json(monkeypatch):
+    _, details, _ = _run(monkeypatch, ANSWER)
+    assert details["parsed_from"] == "json"

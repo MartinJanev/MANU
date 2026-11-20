@@ -148,7 +148,7 @@ def test_seconds_and_blank_columns(tmp):
                                           {"image_path": "BLANK__IXI002-Guys-0828-T1.nii.gz", "seconds": 100.0}])
     runs = load_split(tmp / "results", tmp / "reference", "dev", SPLITS)
     line = [x for x in split_report(runs, tmp / "results", "dev") if x.startswith("| m |")][0]
-    assert line.endswith("| 100.0% | 4.0 |")
+    assert line.endswith("| 100.0% | normal · — · — | 4.0 |")  # blank → diagnosis: IXI control only
 
 
 def test_selftest_still_passes(capsys):

@@ -7,7 +7,9 @@ section "CT and MRI" of the MedGemma 1.5 technical report (arXiv 2604.05081v2):
 - CT (the CT-RATE control): three windows in R, G, B, (-1024, 1024), (-135, 215), (0, 80) HU (the notebook's code);
 - each slice JPEG-encoded as a data URI (the notebook's _encode); the processor resizes it to 896x896.
 One user message (no system role): instruction, then (image, "SLICE n") per slice, then the JSON schema.
-Greedy decoding, max_new_tokens 1024. A failed parse raises PredictionError: an error record, raw text in details.
+Greedy decoding, max_new_tokens 1024. On real scans the model often writes a FINDINGS/IMPRESSION report instead of
+the JSON (dev run, job 2759): such an answer is read with the shared report extractor (details.parsed_from "report").
+An answer with no usable value either way raises PredictionError: an error record, raw text in details.
 
 Usage: sbatch -J medgemma15 jobs/run_model.sh medgemma15 --split dev|eval|full [--controls] [--limit N]
        (jobs/run_model.sh runs `python3 /manu/models/medgemma15/run.py --split ...` inside the container)
@@ -19,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 from common import runner
-from common.parse import parse_json_answer
+from common.parse import extract_from_report, parse_json_answer
 from common.schema import full_prompt, normalize_values, slice_preface
 from evaluation.evaluate import norm_diag
 
@@ -89,6 +91,26 @@ def build_messages(slice_uris, instruction, query_text):
     return [{"role": "user", "content": content}]
 
 
+def answer_values(raw, dataset, details):
+    """Raw schema values of one answer: its JSON, else the answer read as a report. Fills details (problems,
+    parsed_from, diagnosis_name_raw); raises PredictionError when nothing usable is left. Also used by
+    tools/reparse.py."""
+    obj, problems = parse_json_answer(raw)
+    details["problems"] = problems
+    details["parsed_from"] = "json" if obj is not None else "report"
+    if obj is None:
+        obj = extract_from_report(raw, dataset)
+    if "diagnosis_name" in obj:  # "Normal" -> normal, "Brain tumor" -> tumor (evaluation's normaliser)
+        details["diagnosis_name_raw"] = obj["diagnosis_name"]
+        obj["diagnosis_name"] = norm_diag(obj["diagnosis_name"])
+    if not any(v is not None for v in normalize_values(dataset, obj).values()):
+        if details["parsed_from"] == "report":
+            raise runner.PredictionError(
+                f"no usable JSON in the answer ({', '.join(problems)}) and no finding in it as a report", details)
+        raise runner.PredictionError("JSON without any valid schema value", details)
+    return obj
+
+
 class MedGemma15Adapter:
     name = "medgemma-1.5-4b"
     model_id = "google/medgemma-1.5-4b-it"
@@ -129,17 +151,8 @@ class MedGemma15Adapter:
         instruction, query_text = split_prompt(scan.dataset, len(indices))
         messages = build_messages([encode(s) for s in slices], instruction, query_text)
         raw = self._generate(messages)
-        obj, problems = parse_json_answer(raw)
-        details = {"prompt": {"instruction": instruction, "query": query_text}, "raw": raw,
-                   "problems": problems, "slices": indices}
-        if obj is None:
-            raise runner.PredictionError(f"no usable JSON in the answer ({', '.join(problems)})", details)
-        if "diagnosis_name" in obj:  # "Normal" -> normal, "Brain tumor" -> tumor (evaluation's normaliser)
-            details["diagnosis_name_raw"] = obj["diagnosis_name"]
-            obj["diagnosis_name"] = norm_diag(obj["diagnosis_name"])
-        if not any(v is not None for v in normalize_values(scan.dataset, obj).values()):
-            raise runner.PredictionError("JSON without any valid schema value", details)
-        return obj, details
+        details = {"prompt": {"instruction": instruction, "query": query_text}, "raw": raw, "slices": indices}
+        return answer_values(raw, scan.dataset, details), details
 
 
 if __name__ == "__main__":

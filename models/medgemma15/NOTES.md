@@ -49,6 +49,12 @@ Before running: export `HF_TOKEN` (an account that accepted the HAI-DEF terms) o
 
 Smoke test (1 IXI, 1 MS): `sbatch -J medgemma15 jobs/run_model.sh medgemma15 --split dev --datasets ixi,ms --controls`
 
+- Job 2759 (2026-11-20, dev): IXI answered in JSON; the 4 MOLAB scans, the MS scan and the CT-RATE scan got a
+  FINDINGS/IMPRESSION report instead ("... IMPRESSION: Normal brain."), so 6 of 11 rows were `no_json` errors. Every
+  blank control answered in JSON. Such reports are now read with `common.parse.extract_from_report`, the extractor
+  the report models share (`details.parsed_from`: `json` or `report`); the dev rows were re-scored with
+  `python3 -I tools/reparse.py medgemma-1.5-4b dev`.
+
 ## Eval run
 
 `sbatch -J medgemma15 jobs/run_model.sh medgemma15 --split eval --controls`

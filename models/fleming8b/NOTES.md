@@ -15,9 +15,9 @@ Copied from the card (`demo/demo.py`): `load()` = `load_model` (`AutoModel.from_
 
 Deviations:
 - The volume comes from memory (no `np.load`). `slice_images` writes `dynamic_preprocess` with `max_num=1` as its only possible result, a resize to 448x448 with Pillow's default filter (bicubic); `test_slice_images_match_card_loader` checks it against the card's functions verbatim. A scratch check (not in the repo) with CPU torch 2.6.0 / torchvision 0.21.0 ran `_generate` with a stand-in model: its `pixel_values` equal the card's `convert_npy_to_images` output (max abs difference 0, bf16) on random, per-slice-scaled and all-zero volumes and on the card's `test.npy`; `chat()` received `num_patches_list=[1]*11`, `history=None`, `return_history=True`.
-- `max_new_tokens=2048` (global constraints: it thinks first) instead of the 3D example's 1024; `num_beams=1` passed explicitly (the card passes only `do_sample=False`).
+- `max_new_tokens=4096` (it thinks first; 2048 at first, see Eval run) instead of the 3D example's 1024; `num_beams=1` passed explicitly (the card passes only `do_sample=False`).
 - The question is `full_prompt(dataset)`, without a slice preface (the card's 3D path adds none). The card's `REASONING_PROMPT` asks for "a concise final answer in a short word or phrase", which pulls against our JSON request: the model may put a phrase in `<answer>` (problem `no_json`).
-- Parsing: `parse_json_answer` drops closed `<think>` blocks and reads `<answer>...</answer>`. A `<think>` that never closes (the 2048 tokens ran out while reasoning) gives no values and the problem `truncated_think`, as in qoqmed7b.
+- Parsing: `parse_json_answer` drops closed `<think>` blocks and reads `<answer>...</answer>`. A `<think>` that never closes (the token limit ran out while reasoning) gives no values and the problem `truncated_think`, as in qoqmed7b.
 
 Best guesses (not verifiable here):
 - The 8B repo ships InternVL3's remote code (`config.json` `auto_map` to its own `modeling_internvl_chat.py`, whose `chat()` matches the InternVL GitHub version read above). If `auto_map` names another repo (e.g. `OpenGVLab/InternVL3-8B`), the offline job fails at `load()` and that repo must be added to `HF_REPOS`.
@@ -44,5 +44,9 @@ Before running: nothing known (the card shows no access gate; if the download as
 ## Dev run
 
 ## Eval run
+
+- Job 2761 (2026-11-20, `max_new_tokens=2048`): 8 of 32 answers `truncated_think` (the reasoning never closed), 2
+  `no_json`, both on blank controls (the model says there is no image to analyse). Raised to 4096; rerun the eval
+  with `--fresh`, since a truncated answer is a success row with no values and a resume does not retry it.
 
 ## Pitfalls

@@ -473,6 +473,23 @@ def blank_agreement(results, model, split):
     return statistics.mean(shares) if shares else None
 
 
+def blank_diagnoses(results, model, split):
+    """Diagnosis of the blank-volume control per dataset, 'IXI · MOLAB · MS' ('null' when it gave none,
+    '—' when that dataset has no control); None when the model has no controls at all."""
+    directory = Path(results) / model / split
+    files = _run_files(directory, "_controls.jsonl") if directory.is_dir() else {}
+    if not files:
+        return None
+    shown = []
+    for dataset in TRUTH_DIAG:
+        rows = _read_jsonl(files[dataset]) if dataset in files else []
+        if not rows:
+            shown.append("—")
+            continue
+        shown.append(field(rows[0]["output"].get("parsed_response") or {}, "diagnosis_name") or "null")
+    return " · ".join(shown)
+
+
 def _median_seconds(directory):
     if directory is None:
         return None
@@ -559,9 +576,10 @@ def split_report(runs, results, split):
             pooled = pct(class_metrics(t, p)["bal_acc"])
         else:
             pooled = "—"
-        blank = None
+        blank, blank_diag = None, None
         if directory is not None:
             blank = blank_agreement(results, directory.parent.name, directory.name)
+            blank_diag = blank_diagnoses(results, directory.parent.name, directory.name)
         seconds = _median_seconds(directory)
         rows.append([model, _mode(directory), len(all_rows),
                      pct(sum(_is_valid(p) for _, p, _ in all_rows) / len(all_rows)) if all_rows else "—",
@@ -569,17 +587,20 @@ def split_report(runs, results, split):
                      pct(_diag_acc(mine["molab"], "molab")) if "molab" in mine else "—",
                      pct(_molab_patient_acc(mine["molab"])) if "molab" in mine else "—",
                      pct(_diag_acc(mine["ms"], "ms")) if "ms" in mine else "—",
-                     pooled, pct(blank), "—" if seconds is None else f"{seconds:.1f}"])
+                     pooled, pct(blank), blank_diag or "—", "—" if seconds is None else f"{seconds:.1f}"])
     L = [f"# Evaluation: {split} split", "",
          "Accuracy is the share of scans with the expected diagnosis (IXI normal, MOLAB tumor, MS multiple "
          "sclerosis); MOLAB (patient majority) votes over each patient's scans. Pooled bal.acc covers "
          "IXI+MOLAB+MS as one 3-class task (33.3% = no signal). Blank agreement = share of categorical "
          "fields where the blank-volume control equals the most common real answer (high = image ignored).", ""]
     L += table(["model", "mode", "records", "valid", "IXI acc", "MOLAB acc (scan)", "MOLAB acc (patient majority)",
-                "MS acc", "pooled bal.acc", "blank agreement", "median s/scan"], rows) + [""]
+                "MS acc", "pooled bal.acc", "blank agreement", "blank → diagnosis (IXI · MOLAB · MS)",
+                "median s/scan"], rows) + [""]
     L += ["MOLAB patient majority: correct only with a strict plurality for the truth label (ties count as wrong). "
           "Blank agreement: share of categorical fields with a non-null usual answer where the blank-image "
-          "control gives that same answer (high = the model ignores the image).", ""]
+          "control gives that same answer (high = the model ignores the image). Blank → diagnosis: what the "
+          "blank-volume control was diagnosed as; the same label as on every real scan means the image is ignored, "
+          "null means the model declined to answer.", ""]
     shown = {m: per for m, per in scored.items() if per}
     L += ["## Confusion matrices (diagnosis)", ""]
     L += confusion_lines(shown, "truth \\ model", "rows = truth, columns = predicted")

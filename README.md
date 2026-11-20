@@ -10,7 +10,8 @@ jobs/          job_radfm.sh (SLURM)
 containers/    radfm.Dockerfile (+ *.sif on the cluster only)
 data_tools/    prezemi_podatoci.sh  proveri_podatoci.py
 evaluation/    evaluate.py  check_schema.py
-tools/         layout.py, migrate_cluster.sh, sync_to_cluster.sh, fetch_results.sh
+tools/         layout.py, migrate_cluster.sh, sync_to_cluster.sh, fetch_results.sh,
+               make_split.py, reparse.py, site_baseline.py
 reference/     colleagues' *_processed.jsonl
 results/       <model>/<split>/..., slurm/, archive/  (not in git)
 tests/
@@ -53,6 +54,31 @@ sbatch -J <model> jobs/run_model.sh <model> --split eval --controls --fresh
 
 Resubmit a job that was killed half-way *without* `--fresh`, so it continues where it stopped.
 `run_info.json` keeps the first run's start time and commit; each resume is listed under `resumed`.
+
+## Re-scoring, a larger split, the site baseline
+
+After a parser fix, re-score saved answers without the GPU (copies the old files to `results/archive/` first;
+needs numpy, nibabel, scipy and Pillow, as the tests do):
+
+```
+python3 -I tools/reparse.py healthgpt-pro-27b|medgemma-1.5-4b dev|eval
+```
+
+A larger eval split (on the cluster login node, standard library only). It keeps the current eval patients, adds
+random ones up to `--per-dataset` (dev excluded) and writes `results/splits_proposed.json`. Fetch it, copy it over
+`splits.json` on the Mac, commit and sync; otherwise the next sync puts the old `splits.json` back on the cluster:
+
+```
+python3 tools/make_split.py --data data --per-dataset 30
+```
+
+Site-shortcut baseline: how well acquisition features alone (voxel spacing, shape, intensity percentiles) tell IXI,
+MOLAB and MS apart. Near 100% means a model can score by recognising the dataset. CPU only, after the new split:
+
+```
+SINGULARITYENV_PYTHONUSERBASE=/pyuser singularity exec -B .:/manu -B ./data:/data -B ./results:/results \
+    -B ./pyuser/hlip:/pyuser containers/ngc2412.sif python3 /manu/tools/site_baseline.py --data /data --results /results
+```
 
 ## Cluster sync
 

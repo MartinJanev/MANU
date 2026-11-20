@@ -4,9 +4,10 @@ The calls follow the 3D-volume example of the model card (the same call sequence
 of github.com/ZJU4HealthCare/HealthGPT, written there for the Qwen3-VL based 4B/8B): the slices go in as one video
 of PIL frames (`"sample_fps": 2.0`), `process_vision_info` of qwen-vl-utils prepares it, the processor gets
 `do_resize=False`.
-The chat template's generation prompt ends with an open <think> (Qwen3.6 thinking mode, which the card does not
-turn off), so the decoded output starts inside the reasoning: only the text after the last </think> is parsed,
-and an output in which the reasoning never closes gives no values.
+If the chat template's generation prompt ends with an open <think> (Qwen3.6 thinking mode), the decoded output
+starts inside the reasoning: only the text after the last </think> is parsed, and an output in which the reasoning
+never closes gives no values. The eval run (job 2762) showed the template does not open one: the answers are plain
+JSON, so `_generate` reports whether the prompt ended in <think> and only then is the output treated as reasoning.
 
 Usage: sbatch -J healthgptpro27b jobs/run_model.sh healthgptpro27b --split dev|eval|full [--controls] [--limit N]
        (jobs/run_model.sh runs `python3 /manu/models/healthgptpro27b/run.py --split ...` inside the container)
@@ -24,13 +25,22 @@ IMAGE_PATCH_SIZE = 16  # process_vision_info argument of the card (the vision to
 THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
 
 
-def _answer_part(raw):
-    """Text after the last </think>, or None if the reasoning (opened by the generation prompt) never closes."""
-    text = THINK_OPEN + raw  # the <think> the chat template put at the end of the prompt
+def _answer_part(raw, opened):
+    """Text after the last </think>, or None if the reasoning never closes. `opened`: the generation prompt
+    ended in <think>, so the output starts inside the reasoning."""
+    text = (THINK_OPEN if opened else "") + raw
     close = text.rfind(THINK_CLOSE)
     if text.rfind(THINK_OPEN) > close:
         return None  # generation stopped inside the reasoning: any JSON there is not an answer
-    return text[close + len(THINK_CLOSE):]
+    return text if close == -1 else text[close + len(THINK_CLOSE):]  # -1: no reasoning at all
+
+
+def answer_values(raw, opened):
+    """(JSON object or None, problems) of one decoded output; also used by tools/reparse.py."""
+    answer = _answer_part(raw, opened)
+    if answer is None:
+        return None, ["truncated_think"]
+    return parse_json_answer(answer)
 
 
 class HealthGPTProAdapter:
@@ -83,20 +93,17 @@ class HealthGPTProAdapter:
         ).to(self.model.device)
         generated = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, num_beams=1)
         trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
-        return self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        raw = self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        return raw, prompt.rstrip().endswith(THINK_OPEN)
 
     def predict(self, scan, volumes):
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         frames = to_rgb_images(vol01, slices, IMAGE_SIZE)
         text = slice_preface(N_SLICES) + full_prompt(scan.dataset)
-        raw = self._generate(frames, text, MAX_NEW_TOKENS)
-        answer = _answer_part(raw)
-        if answer is None:
-            obj, problems = None, ["truncated_think"]
-        else:
-            obj, problems = parse_json_answer(answer)
-        return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices}
+        raw, opened = self._generate(frames, text, MAX_NEW_TOKENS)
+        obj, problems = answer_values(raw, opened)
+        return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices, "think_opened": opened}
 
 
 if __name__ == "__main__":
