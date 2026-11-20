@@ -4,13 +4,17 @@
 Run on the cluster login node (standard library only), next to data/. Dev patients are never picked. Writes
 results/splits_proposed.json (fetch_results.sh brings it to the Mac) and prints patients and scans per dataset.
 Keeping the old eval patients means scans that already have results are resumed, not rerun.
+CT-RATE draws from every validation patient in its labels CSV (only a few volumes are downloaded); fetch the
+chosen ones afterwards with data_tools/prezemi_ct_rate.py --split eval.
 
 Usage: python3 tools/make_split.py [--data data] [--per-dataset 30] [--seed 0] [--out results/splits_proposed.json]
 """
 import argparse
 import collections
+import csv
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -18,7 +22,18 @@ MANU = Path(__file__).resolve().parent.parent
 if str(MANU) not in sys.path:
     sys.path.insert(0, str(MANU))
 
-from common.datasets import DATASETS, find_scans, load_splits  # noqa: E402
+from common.datasets import CT_RATE_LABELS, DATASETS, find_scans, load_splits  # noqa: E402
+
+
+def ct_rate_patients(data_dir):
+    """Every CT-RATE validation patient with a first volume (valid_N_a_1) in the labels CSV, one scan each.
+    Empty when the CSV is not there."""
+    path = Path(data_dir) / CT_RATE_LABELS
+    if not path.exists():
+        return collections.Counter()
+    with open(path, encoding="utf-8", newline="") as f:
+        hits = (re.match(r"(valid_\d+)_a_1\.nii\.gz$", row["VolumeName"]) for row in csv.DictReader(f))
+        return collections.Counter(m.group(1) for m in hits if m)
 
 
 def propose(data_dir, splits, per_dataset, seed):
@@ -28,6 +43,8 @@ def propose(data_dir, splits, per_dataset, seed):
     for dataset in DATASETS:
         scans = find_scans(str(data_dir), dataset, "full", splits)
         per_patient = collections.Counter(s.patient for s in scans)
+        if dataset == "ct_rate":
+            per_patient = ct_rate_patients(data_dir) or per_patient
         keep = list(splits["eval"].get(dataset, []))
         dev = set(splits["dev"].get(dataset, []))
         pool = sorted(p for p in per_patient if p not in dev and p not in keep)
