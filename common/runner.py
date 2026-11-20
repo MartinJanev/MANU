@@ -9,6 +9,10 @@ Output: <results>/<name>/<split>/
   <name>_<tag>_controls.jsonl    with --controls: one blank-volume record per dataset (row_index -1)
   run_info.json                  model, split, versions, host, git commit
 
+A failed answer: predict() raises PredictionError(message, details) and the scan is recorded as an error
+(status "error", the message in output.error) while its details (raw text, prompt, slices) still go to the details
+file. Any other exception is recorded the same way without details.
+
 Resume (the default): a rerun skips the scans (and controls) already recorded without an error. Error rows are
 removed from the three files first and those scans are run again; a cut-off last line (a job killed mid-write) is
 dropped the same way. Resuming continues a run of the same code; run_info.json keeps the first run's start time and
@@ -41,6 +45,16 @@ from common.torch_compat import alias_transform_get_item_to_index
 alias_transform_get_item_to_index()
 
 MODES = ("full_json", "qna_per_field", "findings_then_extract", "clip_or_heads")
+
+
+class PredictionError(Exception):
+    """Raised by predict() when the model answered but no usable values came out (e.g. no JSON in the text).
+
+    The scan becomes an error record, and `details` (JSON-serialisable) is still written to the details file."""
+
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details if details is not None else {}
 
 
 class Adapter(Protocol):
@@ -182,6 +196,9 @@ def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
     try:
         raw, details = adapter.predict(scan, volumes_fn())
         values = normalize_values(scan.dataset, raw)
+    except PredictionError as e:  # the model answered, but unusably: keep what it said
+        error = f"{type(e).__name__}: {e}"
+        details = e.details
     except Exception as e:  # one bad scan or an OOM must not kill the job
         error = repr(e)
     seconds = round(time.time() - start, 1)

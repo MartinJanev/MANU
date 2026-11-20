@@ -1,0 +1,8 @@
+# The pins of containers/radfm.Dockerfile (RadFM's requirements.txt, transformers 4.28.1 as in the paper). radfm.sif
+# already has them, so pip installs none of these into pyuser/radfm_qna.
+transformers==4.28.1
+tokenizers==0.13.3
+huggingface-hub==0.16.4
+sentencepiece==0.1.99
+einops==0.6.1
+einops-exts==0.0.4

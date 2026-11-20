@@ -13,7 +13,6 @@ evaluation/    evaluate.py  check_schema.py
 tools/         layout.py, migrate_cluster.sh, sync_to_cluster.sh, fetch_results.sh
 reference/     colleagues' *_processed.jsonl
 results/       <model>/<split>/..., slurm/, archive/  (not in git)
-archive/code/  old RadFM runners
 tests/
 cluster only (not in git): data/ hf_cache/ pyuser/<model>/ third_party/ containers/*.sif
 ```

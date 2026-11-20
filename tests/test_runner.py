@@ -379,3 +379,24 @@ def test_run_info_of_a_run_that_recorded_nothing_is_replaced(tmp):
     go(tmp, FlakyAdapter())
     info = json.loads((out / "run_info.json").read_text())
     assert info["started"] != "2026-01-01T00:00:00" and "resumed" not in info
+
+
+class UnparsableAdapter(FakeAdapter):
+    """Answers, but without usable values: raises PredictionError with the raw text in its details."""
+
+    def predict(self, scan, volumes):
+        self.seen.append((scan.image_path, volumes))
+        raise runner.PredictionError("no JSON in the answer", {"raw": "I cannot tell.", "problems": ["no_json"]})
+
+
+def test_prediction_error_is_an_error_record_with_details(tmp):
+    _, out = go(tmp, UnparsableAdapter(), datasets=["ixi"])
+    (rec,) = rows(out / "fake_healthy_processed.jsonl")
+    assert rec["output"]["status"] == "error"
+    assert rec["output"]["parsed_response"] is None
+    assert rec["output"]["error"] == "PredictionError: no JSON in the answer"
+    (detail,) = rows(out / "fake_healthy_details.jsonl")
+    assert detail["error"] == rec["output"]["error"]
+    assert detail["details"]["raw"] == "I cannot tell."
+    assert detail["details"]["problems"] == ["no_json"]
+    assert detail["details"]["raw_values"] == {}
