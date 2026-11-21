@@ -21,13 +21,13 @@ def _volume():
     return np.random.default_rng(0).random((40, 64, 64), dtype=np.float32)
 
 
-def _run(monkeypatch, output, dataset="molab", opened=True):
+def _run(monkeypatch, output, dataset="molab", opened=True, n_tokens=2048):
     adapter = HealthGPTProAdapter()
     calls = []
 
     def fake_generate(frames, text, max_new_tokens):
         calls.append((frames, text, max_new_tokens))
-        return output, opened
+        return output, opened, n_tokens
 
     monkeypatch.setattr(adapter, "_generate", fake_generate)
     values, details = adapter.predict(_scan(dataset), [_volume()])
@@ -141,6 +141,13 @@ def test_unclosed_think_is_empty_with_problem(monkeypatch):
     values, details, _ = _run(monkeypatch, 'Axial T1. A draft {"diagnosis_name": "tumor"}, but the')
     assert values == {}
     assert details["problems"] == ["truncated_think"]
+
+
+def test_open_think_but_short_plain_json_is_parsed(monkeypatch):
+    # job 2777: the prompt opened <think>, the model answered ~200 tokens of plain JSON with no </think>
+    values, details, _ = _run(monkeypatch, '{"diagnosis_name": "normal", "modality": "MRI"}', n_tokens=120)
+    assert values == {"diagnosis_name": "normal", "modality": "MRI"}
+    assert details["problems"] == [] and details["think_opened"] is True and details["n_tokens"] == 120
 
 
 def test_answer_without_json_is_empty_with_problem(monkeypatch):

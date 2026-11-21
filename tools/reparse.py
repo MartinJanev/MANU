@@ -28,8 +28,9 @@ from common.schema import build_record, normalize_values  # noqa: E402
 def _healthgpt(raw, dataset, details):
     from models.healthgptpro27b.run import answer_values
 
-    # The saved eval/dev answers (jobs 2734 dev, 2762 eval) are plain JSON: the template had not opened a <think>
-    obj, problems = answer_values(raw, opened=False)
+    # The saved eval/dev answers (jobs 2734 dev, 2762 and 2777 eval) are plain JSON of at most ~200 tokens, far below
+    # max_new_tokens: none was cut off, whether or not the template opened a <think> (it did in 2777)
+    obj, problems = answer_values(raw, cut_off=False)
     details["problems"] = problems
     return obj or {}
 

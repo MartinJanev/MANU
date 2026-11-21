@@ -51,6 +51,12 @@ Before running: no gating is shown on the card (if the download asks for a token
   JSON with no `<think>` or `</think>`: the template did not open a reasoning block, but `_answer_part` assumed it
   had. `_generate` now reports whether the prompt ended in `<think>` (`details.think_opened`); the saved answers were
   re-scored with `python3 -I tools/reparse.py healthgpt-pro-27b eval` (and `dev`), no GPU rerun.
+- Job 2777 (2026-11-21, 30-patient eval split): all 234 answers `truncated_think` again, this time with
+  `think_opened: true` (the cluster's template did open `<think>`), yet `details.raw` is plain JSON with no
+  `</think>` and at most 724 characters (~200 tokens, far below 2048). Whether the model skipped the reasoning or the
+  tokenizer stripped `</think>` as a special token is not known (HealthGPT-Pro's own `tokenizer.json` was not read).
+  A cut-off answer now also requires `n_tokens >= max_new_tokens` (recorded in `details.n_tokens`); the saved answers
+  were re-scored with `tools/reparse.py`, no GPU rerun.
 
 ## Pitfalls
 
