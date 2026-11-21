@@ -4,21 +4,43 @@
 
 ```
 README.md  splits.json  .gitignore
-common/        shared pipeline (grows in later tasks)
-models/        radfm/run.py, one folder per model
-jobs/          job_radfm.sh (SLURM)
+common/        shared pipeline: runner, datasets, volume, prompts, parsing, QnA bank
+models/        one folder per model: run.py (adapter), env.sh, requirements.txt, NOTES.md
+jobs/          run_model.sh (SLURM), setup_env.sh, requirements_common.txt
 containers/    radfm.Dockerfile (+ *.sif on the cluster only)
-data_tools/    prezemi_podatoci.sh  proveri_podatoci.py
+data_tools/    prezemi_podatoci.sh  prezemi_ct_rate.py  proveri_podatoci.py
 evaluation/    evaluate.py  check_schema.py
-tools/         layout.py, migrate_cluster.sh, sync_to_cluster.sh, fetch_results.sh,
-               make_split.py, reparse.py, site_baseline.py
+tools/         sync_to_cluster.sh, fetch_results.sh, make_split.py, reparse.py, site_baseline.py
 reference/     colleagues' *_processed.jsonl
 results/       <model>/<split>/..., slurm/, archive/  (not in git)
 tests/
 cluster only (not in git): data/ hf_cache/ pyuser/<model>/ third_party/ containers/*.sif
 ```
 
-Check a checkout: `python3 tools/layout.py [--cluster] [ROOT]`.
+## Model status
+
+Eval split (30 patients per dataset), T1 for every dataset unless marked FLAIR; numbers from
+`results/report_eval.md`. Pooled bal.acc 33.3% = no signal. Blank agreement = share of answers the blank-volume
+control repeats (high = the image is ignored). Every adapter stays in `models/`: "not usable here" means no answer
+that depends on the image on these brain MRI datasets through this pipeline, not that the model cannot work on
+other data. Details per model in `models/<model>/NOTES.md`.
+
+| model | status here | evidence |
+|---|---|---|
+| hlip | works (IXI/MOLAB) | pooled bal.acc 56.0%, MOLAB 96.7% per patient; MS T1 27.6% is its default answer (blank → MS), FLAIR 6.9% |
+| healthgpt-pro-27b | works | 51.9%, IXI 93.3%, MOLAB 60.0%; MS T1 0%, **FLAIR 82.8%** (blank → tumor) |
+| qwen3-vl-8b | partial | 48.0%, IXI 100%, MOLAB 33.3%; MS T1 3.4%, FLAIR 27.6% |
+| medgemma-1.5-4b | partial | 44.9%, blank agreement 87.5% on T1; MS **FLAIR 96.6%** (blank → normal) |
+| lingshu-7b | ignores the image | 47.8% from answering "normal"; blank agreement 85.4% |
+| qoq-med-vl-7b | ignores the image | 38.4%: "tumor/glioma" for almost every scan, MS 0% on T1 and FLAIR |
+| med-2e3 | not usable here | 23.1%; says CT for every MRI scan, blank → stroke (a setup problem is not ruled out) |
+| fleming-vl-8b | not usable here | 13.5%, 69.6% valid answers, mostly null or "normal" |
+| braingemma3d | not usable here | 2.3%: "other abnormalities" for almost every scan (a setup problem is not ruled out) |
+| radfm-qna | not usable here | "normal" for every scan (33.3%), blank agreement 79.2% |
+| prima | not run | adapter ready; trained on studies with ≥ 2 series, IXI and MOLAB have one |
+
+FLAIR caveat: MS is the only dataset given as FLAIR (IXI has none, MOLAB is T1+Gd), so a model that answers MS
+whenever it sees FLAIR scores the same as one that reads the lesions.
 
 ## Splits
 
@@ -89,14 +111,8 @@ EduVPN on. From the Mac (never deletes on the cluster; `RSYNC_DRY=1` for a dry r
 bash tools/sync_to_cluster.sh
 ```
 
-Once, on the cluster, to move its own files into the new layout (the first run only prints the plan):
-
-```
-bash tools/migrate_cluster.sh
-bash tools/migrate_cluster.sh --apply
-```
-
-Fetch results back to `./results/` (without `archive/`):
+Fetch results back to `./results/` (without `archive/`; a local file newer than the cluster's, e.g. one
+re-scored by `tools/reparse.py`, is kept):
 
 ```
 bash tools/fetch_results.sh

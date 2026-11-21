@@ -1,14 +1,14 @@
 """RadFM (MedLLaMA-13B + 3D ViT perceiver, trained on RadMD): the shared per-field questions, like the other models.
 
-The older models/radfm/run.py ran RadFM outside the shared pipeline (its own questions, likelihood choice
-calibrated on a black volume, its own run loop). This adapter puts RadFM through common.runner instead: the same
+The earlier runner models/radfm/run.py (removed after 45b8448) ran RadFM outside the shared pipeline (its own
+questions, likelihood choice calibrated on a black volume, its own run loop). This adapter puts RadFM through common.runner instead: the same
 splits, canonical volume, question bank (common.qna, the M3D "Choices: A. ... D. ..." format med-2e3 uses), output
 records, resume and blank controls as every other model, so its row in the dev/eval report is comparable.
 
 Per scan
   1. The canonical axial stack (common.volume.load_canonical) -> to01 -> 64 x 256 x 256 -> RadFM's layout
-     [1 batch, 1 image, 3 channels, H 256, W 256, D 64] (grey repeated to 3 channels), as load_volume in
-     models/radfm/run.py builds it.
+     [1 batch, 1 image, 3 channels, H 256, W 256, D 64] (grey repeated to 3 channels), as the earlier
+     runner's load_volume built it.
   2. Each question of common.qna.interrogate is asked as "<image>...</image>" + question (the image first, as in
      RadFM/Quick_demo/test.py), greedy, at most 16 new tokens. RadFM was trained to answer VQA in free text, not
      with letters, so the four option probabilities are the likelihoods of the four displayed option texts after
@@ -17,7 +17,7 @@ Per scan
   3. One free-text report (RadFM's caption template) per scan goes to the details file, for reading only.
 
 Model code, tokenizer files and pytorch_model.bin come from the RadFM clone already on the cluster
-(third_party/RadFM/Quick_demo, the folder jobs/job_radfm.sh mounts as /radfm); Med-KEBERT, which RadFM's
+(third_party/RadFM/Quick_demo); Med-KEBERT, which RadFM's
 embedding layer loads at construction, from hf_cache. Image: containers/radfm.sif (transformers 4.28.1).
 
 Usage: sbatch -J radfm_qna jobs/run_model.sh radfm_qna --split dev|eval|full [--controls] [--limit N]
@@ -37,7 +37,7 @@ IMAGE_TOKENS_PER_IMAGE = 32  # <image0>..<image31> stand for the 32 perceiver ou
 PAD_ID, BOS_ID, EOS_ID = 0, 1, 2  # as set in Quick_demo/test.py (Language_files/config.json says eos 1)
 MAX_NEW_TOKENS = 16  # MCQ answers (global constraint)
 REPORT_MAX_NEW_TOKENS = 512  # reports (global constraint)
-# RadFM's caption training template, the same report question models/radfm/run.py asks
+# RadFM's caption training template, the same report question the earlier runner asked
 REPORT_QUESTION = "Can you provide a caption consists of finding and impression for this medical image?"
 
 _CHOICES = re.compile(r" Choices: A\. (.*?) B\. (.*?) C\. (.*?) D\. (.*)$", re.S)
@@ -46,8 +46,8 @@ _CHOICES = re.compile(r" Choices: A\. (.*?) B\. (.*?) C\. (.*?) D\. (.*)$", re.S
 def model_volume(volume, dataset):
     """Canonical (D, H, W) array -> (H, W, D) float32 in [0, 1], RadFM's axis order (depth last).
 
-    load_canonical's H (front->back) and W (patient right->left) are the rows and columns load_volume in
-    models/radfm/run.py gives RadFM, so only depth moves to the end.
+    load_canonical's H (front->back) and W (patient right->left) are the rows and columns the earlier
+    runner's load_volume gave RadFM, so only depth moves to the end.
     """
     vol = resize(to01(volume, dataset), INPUT_SHAPE)
     return np.ascontiguousarray(vol.transpose(1, 2, 0), dtype=np.float32)

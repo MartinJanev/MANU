@@ -19,7 +19,7 @@ def load_canonical(path):
     vol = np.nan_to_num(np.asarray(img.dataobj, dtype=np.float32))
     if vol.ndim == 4:  # take the first volume of a 4D file
         vol = vol[..., 0]
-    # Same as load_volume in models/radfm/run.py: (x, y, z) -> (rows, cols, depth) ...
+    # Same as load_volume of the earlier RadFM runner (git show 45b8448:models/radfm/run.py): (x, y, z) -> (rows, cols, depth) ...
     vol = vol[::-1, ::-1, :].transpose(1, 0, 2)
     # ... then depth moved to axis 0.
     return np.ascontiguousarray(vol.transpose(2, 0, 1), dtype=np.float32)
