@@ -62,20 +62,16 @@ def patient_id(dataset, image_path):
     raise KeyError(dataset)
 
 
-def _scan_from_file(data_dir, dataset, path, ms_flair):
-    if dataset == "ixi":
-        name = os.path.basename(path)
-        return Scan(dataset, patient_id(dataset, name), name, (path,))
+def _scan_from_file(dataset, path, ms_flair):
+    if dataset == "ms":  # one patient folder
+        folder = os.path.dirname(path)
+        patient = os.path.basename(folder)
+        image = os.path.join(folder, "FLAIR.nii.gz" if ms_flair else "T1W.nii.gz")
+        return Scan(dataset, patient, f"{patient}_T1.nii.gz", (image,))
+    name = os.path.basename(path)
     if dataset == "molab":
-        name = molab_name(os.path.basename(path))
-        return Scan(dataset, patient_id(dataset, name), name, (path,))
-    if dataset == "ct_rate":
-        name = os.path.basename(path)
-        return Scan(dataset, patient_id(dataset, name), name, (path,))
-    folder = os.path.dirname(path)  # ms: one patient folder
-    patient = os.path.basename(folder)
-    image = os.path.join(folder, "FLAIR.nii.gz" if ms_flair else "T1W.nii.gz")
-    return Scan(dataset, patient, f"{patient}_T1.nii.gz", (image,))
+        name = molab_name(name)
+    return Scan(dataset, patient_id(dataset, name), name, (path,))
 
 
 def find_scans(data_dir, dataset, split, splits, ms_flair=False):
@@ -84,7 +80,7 @@ def find_scans(data_dir, dataset, split, splits, ms_flair=False):
     Raises ValueError naming every split patient that has no file, so a model is never
     silently evaluated on fewer patients than intended."""
     pattern = os.path.join(data_dir, DATASETS[dataset]["glob"])
-    scans = [_scan_from_file(data_dir, dataset, p, ms_flair) for p in sorted(glob.glob(pattern))]
+    scans = [_scan_from_file(dataset, p, ms_flair) for p in sorted(glob.glob(pattern))]
     if dataset == "ct_rate":  # the same volume may sit under dataset/valid and dataset/valid_fixed
         by_name = {}
         for s in scans:
@@ -120,9 +116,10 @@ def metadata_for(image_path, reference):
     so a scan the colleagues did not have takes the metadata of the same patient."""
     if image_path in reference:
         return reference[image_path]
-    for name, meta in reference.items():
-        if re.match(r"\d{6}N__", image_path) and name[:6] == image_path[:6]:
-            return meta
+    if re.match(r"\d{6}N__", image_path):
+        for name, meta in reference.items():
+            if name[:6] == image_path[:6]:
+                return meta
     print(f"WARNING: no reference metadata for {image_path}; labels set to null", flush=True)
     meta = dict(next(iter(reference.values())))  # constant fields (dataset, class, modality ...)
     for key in ("primary_origin", "ms_type"):

@@ -386,10 +386,6 @@ def _tag_dataset(name):
     return None
 
 
-def _split_patients(splits, split, dataset):
-    return set(splits.get(split, {}).get(dataset, []))
-
-
 def _read_jsonl(path):
     with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
@@ -420,8 +416,8 @@ def load_split(results, reference, split, splits):
     runs = collections.defaultdict(dict)
 
     def add(model, dataset, path, filtered):
-        keep = (lambda image: patient_id(dataset, image) in _split_patients(splits, split, dataset)) \
-            if filtered else None
+        patients = set(splits.get(split, {}).get(dataset, []))
+        keep = (lambda image: patient_id(dataset, image) in patients) if filtered else None
         rows = _rows(path, keep)
         if rows:
             runs[model][dataset] = rows
@@ -456,8 +452,9 @@ def blank_agreement(results, model, split):
     if not directory.is_dir():
         return None
     shares = []
+    processed_files = _run_files(directory)
     for dataset, path in _run_files(directory, "_controls.jsonl").items():
-        processed = _run_files(directory).get(dataset)
+        processed = processed_files.get(dataset)
         controls = [r["output"]["parsed_response"] for r in _read_jsonl(path) if r["output"].get("parsed_response")]
         real = [p for _, p, _ in _rows(processed) if p] if processed else []
         if not controls or not real:
@@ -486,7 +483,7 @@ def blank_diagnoses(results, model, split):
         if not rows:
             shown.append("—")
             continue
-        shown.append(field(rows[0]["output"].get("parsed_response") or {}, "diagnosis_name") or "null")
+        shown.append(field(rows[0]["output"].get("parsed_response"), "diagnosis_name") or "null")
     return " · ".join(shown)
 
 
@@ -601,6 +598,9 @@ def split_report(runs, results, split):
           "control gives that same answer (high = the model ignores the image). Blank → diagnosis: what the "
           "blank-volume control was diagnosed as; the same label as on every real scan means the image is ignored, "
           "null means the model declined to answer.", ""]
+    site = results / "site_baseline.md"  # tools/site_baseline.py, eval patients
+    if split == "eval" and site.exists():
+        L += ["#" + site.read_text(encoding="utf-8").strip(), ""]
     shown = {m: per for m, per in scored.items() if per}
     L += ["## Confusion matrices (diagnosis)", ""]
     L += confusion_lines(shown, "truth \\ model", "rows = truth, columns = predicted")

@@ -16,27 +16,27 @@ _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 def _first_balanced_object(text):
     """The first {...} with balanced braces (braces inside strings ignored), or None."""
     start = text.find("{")
-    while start != -1:
-        depth, in_string, escaped = 0, False, False
-        for i in range(start, len(text)):
-            c = text[i]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif c == "\\":
-                    escaped = True
-                elif c == '"':
-                    in_string = False
+    if start == -1:
+        return None
+    depth, in_string, escaped = 0, False, False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
             elif c == '"':
-                in_string = True
-            elif c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start:i + 1]
-        return text[start:]  # unbalanced (truncated answer): let json.loads reject it
-    return None
+                in_string = False
+        elif c == '"':
+            in_string = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]  # unbalanced (truncated answer): let json.loads reject it
 
 
 def parse_json_answer(text):

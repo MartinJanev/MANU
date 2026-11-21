@@ -4,6 +4,7 @@ Question and option texts are the M3D-family column of the "Шаблони по 
 is one four-option question; every question is asked twice (options in order and reversed) to expose position bias.
 Standard library only; the model is reached through the `AskFn` callable, so tests need no weights.
 """
+import math
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -136,15 +137,6 @@ def _walk(levels: List[Question], ask_fn: AskFn, style: str) -> dict:
     return final
 
 
-def _product(confidences: List[Optional[float]]) -> Optional[float]:
-    if any(c is None for c in confidences):
-        return None
-    product = 1.0
-    for c in confidences:
-        product *= c
-    return product
-
-
 def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
     """(raw values, log per field) from the per-field questions that apply to `dataset`."""
     values: dict = {}
@@ -180,7 +172,8 @@ def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
             origin["levels"].append(ask(BANK["lung_type"], ask_fn, style))
             origin = dict(origin["levels"][-1], levels=origin["levels"])
         put("primary_origin", origin)
-        values["origin_confidence"] = _product([r["confidence"] for r in origin["levels"]])
+        confidences = [r["confidence"] for r in origin["levels"]]
+        values["origin_confidence"] = None if None in confidences else math.prod(confidences, start=1.0)
         values["primary_origin_subtype"] = None
         values["subtype_confidence"] = None
     elif dataset == "ms":

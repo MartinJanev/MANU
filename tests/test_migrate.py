@@ -11,7 +11,7 @@ from tools.layout import CLUSTER_LAYOUT, check
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = ["tools/migrate_cluster.sh", "tools/sync_to_cluster.sh", "tools/fetch_results.sh"]
-SKIP = shutil.ignore_patterns(".git", ".venv", ".superpowers", "__pycache__", ".pytest_cache",
+SKIP = shutil.ignore_patterns(".git", ".venv", ".superpowers", "__pycache__", ".pytest_cache", ".DS_Store",
                               "results", "data", "hf_cache", "pyuser", "third_party")
 
 
