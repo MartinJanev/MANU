@@ -10,7 +10,8 @@ z-scored, nearest class centroid, leave-one-patient-out. About 33% means the dat
 100% means the dataset is recognisable without anatomy, so a model's accuracy alone cannot show it sees disease.
 
 Usage (needs numpy and nibabel; on the cluster inside the image, see README):
-    python3 tools/site_baseline.py [--data data] [--split eval] [--results results]  -> results/site_baseline.md
+    python3 tools/site_baseline.py [--data data] [--split eval] [--results results]  -> results/site_baseline.md (eval, the pilot)
+                                                  or results/site_baseline_<split>.md
 """
 import argparse
 import sys
@@ -75,6 +76,10 @@ def report(X, y):
     return "\n".join(lines) + "\n"
 
 
+def output_name(split):
+    return "site_baseline.md" if split == "eval" else f"site_baseline_{split}.md"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", default=str(MANU / "data"))
@@ -93,7 +98,7 @@ def main():
                 y.append(dataset)
         print(f"{dataset}: {len(seen)} patients", flush=True)
     text = report(X, y)
-    out = Path(a.results) / "site_baseline.md"
+    out = Path(a.results) / output_name(a.split)
     out.write_text(text, encoding="utf-8")
     print(text + f"written to {out}")
 
