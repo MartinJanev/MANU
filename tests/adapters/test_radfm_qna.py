@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def _scan(dataset="molab"):
-    return Scan(dataset, "p1", "p1.nii.gz", ["p1.nii.gz"])
+    return Scan(dataset, "p10", "p10.nii.gz", ["p10.nii.gz"])
 
 
 def _volume():

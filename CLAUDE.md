@@ -55,7 +55,9 @@ window for CT-RATE) → whatever the model needs (`pick_slices` + `to_rgb_images
 **Modes** (`runner.MODES`): `full_json` (prompt from `common/prompts/full_json.txt`, parsed by
 `common.parse.parse_json_answer`), `qna_per_field` (the `common/qna.py` bank, every question asked in original and
 reversed option order, `parse_choice`), `findings_then_extract` (free report → `extract_from_report`),
-`clip_or_heads`.
+`clip_or_heads`. `--task qna|prior` runs a full-JSON model in the other prompting mode (its `asker`) or with the
+diagnosis stated (`schema.PRIOR`, MOLAB and MS only); results under `<name>-qna` / `<name>-prior`.
+`bash jobs/run_all.sh dev|main|second` submits a whole stage of the paper's runs.
 
 **Standard-library-only modules:** `common/datasets.py`, `schema.py`, `parse.py`, `qna.py` must import without
 numpy, nibabel or torch (they run on the login node and in light tests).

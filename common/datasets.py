@@ -35,6 +35,7 @@ class Scan:
     patient: str
     image_path: str  # the colleagues' spelling, used as the record key
     files: tuple  # absolute paths fed to the model
+    prior: bool = False  # the prior-knowledge condition: the prompt states the diagnosis (runner --task prior)
 
 
 def load_splits(path):

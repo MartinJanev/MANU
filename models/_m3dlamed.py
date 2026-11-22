@@ -57,5 +57,5 @@ class M3DLaMedAdapter:
         def ask_fn(question):
             return self._generate(volume, IMAGE_TOKENS + question, MAX_NEW_TOKENS), None
 
-        values, log = interrogate(scan.dataset, ask_fn, "A")
+        values, log = interrogate(scan.dataset, ask_fn, "A", scan.patient)
         return values, dict(log, input_shape=list(volume.shape))

@@ -1,7 +1,7 @@
 """HLIP (CLIP-style 3D brain MRI encoder, ViT-L with scan + study attention): zero-shot classification, no text output.
 
 The volume is scored against one text prompt per class (class names of HLIP's Pub-Brain-5 and MR-RATE zero-shot
-evaluations); the softmax probabilities are summed per diagnosis group. Only diagnosis_name and
+evaluations); the softmax probabilities are averaged per diagnosis group, then renormalised. Only diagnosis_name and
 diagnosis_confidence are filled: HLIP has no output for any other field. Model code comes from the HLIP git clone
 (third_party/hlip), weights from the Hugging Face snapshot.
 
@@ -173,9 +173,13 @@ class HLIPAdapter:
     def predict(self, scan, volumes):
         volume = preprocess(to01(volumes[0], scan.dataset))
         probs = self._score(volume)
-        groups = {g: 0.0 for g in GROUPS}
-        for c, p in probs.items():
-            groups[CLASS_GROUPS[c]] += float(p)
+        # the mean, not the sum: with 8 tumor classes against 1 normal, a sum says tumor when the model has no idea
+        means = {}
+        for g in GROUPS:
+            members = [float(p) for c, p in probs.items() if CLASS_GROUPS[c] == g]
+            means[g] = sum(members) / len(members)
+        total = sum(means.values())
+        groups = {g: m / total for g, m in means.items()}
         name = max(groups, key=groups.get)
         values = {"diagnosis_name": name, "diagnosis_confidence": groups[name]}
         return values, {"class_probabilities": probs, "group_probabilities": groups, "input_shape": list(volume.shape)}

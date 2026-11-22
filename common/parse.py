@@ -98,7 +98,9 @@ def parse_choice(text, options, style):
     low = text.lower()
     if all(o.lower() in low for o in options):
         return None
-    hits = [i for i, o in enumerate(options) if o.lower() in low]
+    hits = [i for i, o in enumerate(options) if re.search(rf"(?<!\w){re.escape(o.lower())}(?!\w)", low)]
+    # "T1-weighted with contrast" also holds "T1-weighted": the longer option is the answer
+    hits = [i for i in hits if not any(i != j and options[i].lower() in options[j].lower() for j in hits)]
     index = None
     if style == "A":
         m = re.match(r"\s*\(?([A-D])(?:([.):])|\s*$|\s)", text)

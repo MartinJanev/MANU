@@ -28,6 +28,7 @@ from evaluation.evaluate import norm_diag
 MAX_SLICE = 85
 CT_WINDOWS = [(-1024, 1024), (-135, 215), (0, 80)]  # the notebook's window_clips (R, G, B)
 MAX_NEW_TOKENS = 1024
+QNA_MAX_NEW_TOKENS = 128  # one question
 SCHEMA_START = "Output ONLY this JSON schema below"  # first line of the prompt that goes after the slices
 
 
@@ -73,10 +74,10 @@ def encode(data):
     return f"data:image/{fmt};base64,{encoded_string}"
 
 
-def split_prompt(dataset):
+def split_prompt(dataset, prior=False):
     """(instruction, schema text): the prompt's role and task lines plus the slice preface go before the slices,
     the schema (from "Output ONLY this JSON schema below") after them, as the notebook's instruction / query_text."""
-    prompt = full_prompt(dataset)
+    prompt = full_prompt(dataset, prior)
     cut = prompt.index(SCHEMA_START)
     return prompt[:cut] + slice_preface().rstrip("\n"), "\n\n" + prompt[cut:]
 
@@ -131,7 +132,7 @@ class MedGemma15Adapter:
             local_dir, dtype=torch.bfloat16, device_map="auto", offload_buffers=True)
         self.model.eval()
 
-    def _generate(self, messages):
+    def _generate(self, messages, max_new_tokens=MAX_NEW_TOKENS):
         import torch
 
         # The notebook's tokenization and greedy generation; decoding of the new tokens as on the model card
@@ -140,7 +141,7 @@ class MedGemma15Adapter:
             return_tensors="pt", tokenize=True, return_dict=True)
         with torch.inference_mode():
             inputs = inputs.to(self.model.device, dtype=torch.bfloat16)
-            generated = self.model.generate(**inputs, do_sample=False, max_new_tokens=MAX_NEW_TOKENS)
+            generated = self.model.generate(**inputs, do_sample=False, max_new_tokens=max_new_tokens)
         input_len = inputs["input_ids"].shape[-1]
         return self.processor.decode(generated[0][input_len:], skip_special_tokens=True)
 
@@ -148,11 +149,23 @@ class MedGemma15Adapter:
         vol = volumes[0]
         indices = sample_slices(len(vol))
         slices = to_rgb_slices(vol, scan.dataset, indices)
-        instruction, query_text = split_prompt(scan.dataset)
+        instruction, query_text = split_prompt(scan.dataset, scan.prior)
         messages = build_messages([encode(s) for s in slices], instruction, query_text)
         raw = self._generate(messages)
         details = {"prompt": {"instruction": instruction, "query": query_text}, "raw": raw, "slices": indices}
         return answer_values(raw, scan.dataset, details), details
+
+    def asker(self, scan, volumes):
+        """One question per call, over the same slices (runner --task qna): the question where the schema was."""
+        vol = volumes[0]
+        uris = [encode(s) for s in to_rgb_slices(vol, scan.dataset, sample_slices(len(vol)))]
+        instruction = slice_preface().rstrip("\n")
+
+        def ask(question):
+            messages = build_messages(uris, instruction, "\n\n" + question)
+            return self._generate(messages, QNA_MAX_NEW_TOKENS), None
+
+        return ask
 
 
 if __name__ == "__main__":

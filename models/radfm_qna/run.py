@@ -37,6 +37,9 @@ IMAGE_TOKENS_PER_IMAGE = 32  # <image0>..<image31> stand for the 32 perceiver ou
 PAD_ID, BOS_ID, EOS_ID = 0, 1, 2  # as set in Quick_demo/test.py (Language_files/config.json says eos 1)
 MAX_NEW_TOKENS = 16  # MCQ answers (global constraint)
 REPORT_MAX_NEW_TOKENS = 512  # reports (global constraint)
+# Quick_demo/test.py: its question and max_new_tokens
+DEMO_QUESTION = "Can you identify any visible signs of Cardiomegaly in the image?"
+DEMO_MAX_NEW_TOKENS = 200
 # RadFM's caption training template, the same report question the earlier runner asked
 REPORT_QUESTION = "Can you provide a caption consists of finding and impression for this medical image?"
 
@@ -164,10 +167,30 @@ class RadFMQnAAdapter:
         def ask_fn(question):
             return self._generate(volume, question, shown_options(question), MAX_NEW_TOKENS)
 
-        values, log = interrogate(scan.dataset, ask_fn, "A")
+        values, log = interrogate(scan.dataset, ask_fn, "A", scan.patient)
         report, _ = self._generate(volume, REPORT_QUESTION, None, REPORT_MAX_NEW_TOKENS)
         return values, dict(log, report=report, input_shape=list(volume.shape))
 
 
+def demo(adapter, folder=RADFM_DIR):
+    """The validation gate: the authors' Quick_demo/test.py example through this adapter's own loading, binding and
+    generation, next to a blank image. Deterministic resize instead of the demo's RandomResizedCrop."""
+    import os
+
+    from PIL import Image
+
+    grey = Image.open(os.path.join(folder, "view1_frontal.jpg")).convert("L").resize((512, 512), Image.BICUBIC)
+    image = np.repeat((np.asarray(grey, dtype=np.float32) / 255.0)[..., None], 4, axis=2)  # (512, 512, 4)
+    adapter.load()
+    for label, volume in (("image", image), ("blank", np.zeros_like(image))):
+        answer, _ = adapter._generate(volume, DEMO_QUESTION, None, DEMO_MAX_NEW_TOKENS)
+        print(f"DEMO {label}: {answer!r}", flush=True)
+
+
 if __name__ == "__main__":
-    runner.main(RadFMQnAAdapter())
+    import sys
+
+    if "--demo" in sys.argv:
+        demo(RadFMQnAAdapter())
+    else:
+        runner.main(RadFMQnAAdapter())

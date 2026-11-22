@@ -15,7 +15,7 @@ from models.med2e3.run import (Med2E3Adapter, letter_probabilities, letter_token
 
 
 def _scan(dataset="molab"):
-    return Scan(dataset, "p1", "p1.nii.gz", ["p1.nii.gz"])
+    return Scan(dataset, "p10", "p10.nii.gz", ["p10.nii.gz"])
 
 
 def _volume():

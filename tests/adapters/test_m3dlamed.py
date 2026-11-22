@@ -36,7 +36,7 @@ def test_each_question_follows_256_image_tokens(monkeypatch, cls):
 
     monkeypatch.setattr(adapter, "_generate", fake)
     vol = np.random.default_rng(0).random((20, 32, 32), dtype=np.float32)
-    values, details = adapter.predict(Scan("ixi", "p", "p.nii.gz", ("p",)), [vol])
+    values, details = adapter.predict(Scan("ixi", "p10", "p10.nii.gz", ("p10",)), [vol])
     assert IMAGE_TOKENS == "<im_patch>" * 256
     assert calls[0] == IMAGE_TOKENS + format_mcq(BANK["modality"], "A", ORIGINAL)
     assert values["modality"] == "MRI" and details["modality"]["answers"][0]["raw"] == "A"

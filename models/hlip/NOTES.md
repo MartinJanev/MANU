@@ -39,4 +39,9 @@ Before running: `setup_env.sh` fetches both HF repos and clones HLIP. Licence of
 
 ## Pitfalls
 
+- Group rule, fixed 2026-11-22 before any run on the split `paper`: the mean probability of a group's classes,
+  renormalised. The pilot summed them, so 8 tumor classes outweighed 1 normal class. Chosen for that structural
+  reason (equal prior per group), knowing that on the pilot it gives 62.6% balanced accuracy against 56.0% for
+  the sum; other rules tried there gave 57.2% (top class) and 64.0% (one class per group).
+
 - Job 2554 (dev, 2026-11-14) stopped in `load()`: transformers 4.57.6 imports `TransformGetItemToIndex` from `torch._dynamo._trace_wrapped_higher_order_op`, which the image's 2.6.0a0 lacks (it has the class in `torch._higher_order_ops.flex_attention`); open_clip's `hf_model.py` turns the ImportError into "Please `pip install transformers`". `common/torch_compat.py` aliases it; the CPU smoke test with torch 2.6.0 (release) could not show this.

@@ -10,6 +10,7 @@ from common.volume import pick_slices, to01, to_rgb_images
 
 N_SLICES = 8
 IMAGE_SIZE = 448
+QNA_MAX_NEW_TOKENS = 128  # one question
 MAX_NEW_TOKENS = 1024
 
 
@@ -23,19 +24,25 @@ class LingshuAdapter:
 
         self.model, self.processor = load_qwen25vl(self.model_id)
 
-    def _generate(self, images, text):
+    def _generate(self, images, text, max_new_tokens=MAX_NEW_TOKENS):
         from models._qwen25vl import generate_images
 
-        return generate_images(self.model, self.processor, images, text, MAX_NEW_TOKENS)
+        return generate_images(self.model, self.processor, images, text, max_new_tokens)
 
     def predict(self, scan, volumes):
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         images = to_rgb_images(vol01, slices, IMAGE_SIZE)
-        text = slice_preface() + full_prompt(scan.dataset)
+        text = slice_preface() + full_prompt(scan.dataset, scan.prior)
         raw = self._generate(images, text)
         obj, problems = parse_json_answer(raw)
         return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices}
+
+    def asker(self, scan, volumes):
+        """One question per call, over the same slices (runner --task qna)."""
+        vol01 = to01(volumes[0], scan.dataset)
+        images = to_rgb_images(vol01, pick_slices(vol01, N_SLICES), IMAGE_SIZE)
+        return lambda question: (self._generate(images, slice_preface() + question, QNA_MAX_NEW_TOKENS), None)
 
 
 if __name__ == "__main__":

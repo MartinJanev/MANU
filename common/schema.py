@@ -42,6 +42,14 @@ VOCAB = {
     "ms_lesion_burden": ("none", "low", "moderate", "high"),
 }
 
+# The March runs' prior-knowledge ("predznaenje") sentences.
+PRIOR = {
+    "molab": "I'm going to send you a metastasized tumor that originates somewhere else in the body, not the head. "
+             "Your job is to determine the source of the original cancer, and fill in the missing fields of the json, "
+             "especially primary_origin.",
+    "ms": "This is a scan of a patient with multiple sclerosis.",
+}
+
 SYNONYMS = {
     "blader": "bladder",
     "overy": "ovary",
@@ -59,11 +67,18 @@ NUMERIC_KEYS = ("severity_score", "diagnosis_confidence", "severity_confidence",
 ICD10 = re.compile(r"^[A-Z]\d{2}(\.\d+)?$")
 
 
-def full_prompt(dataset):
+def full_prompt(dataset, prior=False):
     """The one full-JSON prompt. The same text for every dataset: each diagnosis is its own dataset, so a
-    per-dataset prompt tells the model the answer (the pilot's did)."""
+    per-dataset prompt tells the model the answer (the pilot's did).
+
+    prior: the prior-knowledge condition. The same prompt plus one line that states the diagnosis (PRIOR), so base
+    and prior differ in that line only."""
     with open(os.path.join(PROMPT_DIR, "full_json.txt"), encoding="utf-8") as f:
-        return f.read()
+        text = f.read()
+    if prior:
+        first, rest = text.split("\n", 1)
+        text = f"{first}\n{PRIOR[dataset]}\n{rest}"
+    return text
 
 
 def slice_preface():

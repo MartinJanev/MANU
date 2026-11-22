@@ -18,6 +18,7 @@ from common.volume import pick_slices, to01, to_rgb_images
 N_SLICES = 10  # as HealthGPT-Pro-27B
 IMAGE_SIZE = 448  # a multiple of 32 (patch 16 x merge 2): qwen-vl-utils keeps 448x448
 MAX_NEW_TOKENS = 1024
+QNA_MAX_NEW_TOKENS = 128
 SAMPLE_FPS = 2.0
 IMAGE_PATCH_SIZE = 16  # README: 16 for Qwen3-VL
 
@@ -36,7 +37,7 @@ class Qwen3VLAdapter:
         self.model.eval()
         self.processor = AutoProcessor.from_pretrained(self.model_id)
 
-    def _generate(self, frames, text):
+    def _generate(self, frames, text, max_new_tokens=MAX_NEW_TOKENS):
         import torch
         from qwen_vl_utils import process_vision_info
 
@@ -56,7 +57,7 @@ class Qwen3VLAdapter:
         inputs = self.processor(text=prompt, images=images, videos=videos, video_metadata=video_metadatas,
                                 return_tensors="pt", do_resize=False, **video_kwargs).to(self.model.device)
         with torch.inference_mode():
-            generated = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False, num_beams=1)
+            generated = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, num_beams=1)
         trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
         return self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
 
@@ -64,7 +65,7 @@ class Qwen3VLAdapter:
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         frames = to_rgb_images(vol01, slices, IMAGE_SIZE)
-        text = slice_preface() + full_prompt(scan.dataset)
+        text = slice_preface() + full_prompt(scan.dataset, scan.prior)
         raw = self._generate(frames, text)
         obj, problems = parse_json_answer(raw)
         details = {"prompt": text, "raw": raw, "problems": problems, "slices": slices}
@@ -73,6 +74,12 @@ class Qwen3VLAdapter:
         if not any(v is not None for v in normalize_values(scan.dataset, obj).values()):
             raise runner.PredictionError("JSON without any valid schema value", details)
         return obj, details
+
+    def asker(self, scan, volumes):
+        """One question per call, over the same frames (runner --task qna)."""
+        vol01 = to01(volumes[0], scan.dataset)
+        frames = to_rgb_images(vol01, pick_slices(vol01, N_SLICES), IMAGE_SIZE)
+        return lambda question: (self._generate(frames, slice_preface() + question, QNA_MAX_NEW_TOKENS), None)
 
 
 if __name__ == "__main__":

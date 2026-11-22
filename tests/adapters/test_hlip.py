@@ -52,15 +52,20 @@ def test_predict_scores_the_preprocessed_volume(monkeypatch):
     assert details["input_shape"] == [48, 224, 224]
 
 
-def test_grouping(monkeypatch):
-    probs = _probabilities()
-    assert max(probs, key=probs.get) == "no significant abnormalities"  # an argmax over classes would say normal
+def test_groups_have_equal_weight_whatever_their_number_of_classes(monkeypatch):
+    probs = _probabilities()  # tumor's 0.45 is spread over 8 classes, normal's 0.30 is one class
     values, details, _ = _run(monkeypatch, probs)
-    assert values["diagnosis_name"] == "tumor"
-    assert values["diagnosis_confidence"] == pytest.approx(0.45)
-    assert details["group_probabilities"] == pytest.approx(
-        {"normal": 0.30, "tumor": 0.45, "stroke": 0.20, "multiple sclerosis": 0.05})
+    means = {"normal": 0.30, "tumor": 0.45 / 8, "stroke": 0.20 / 5, "multiple sclerosis": 0.05}
+    total = sum(means.values())
+    assert values["diagnosis_name"] == "normal"  # a sum over classes would say tumor
+    assert values["diagnosis_confidence"] == pytest.approx(0.30 / total)
+    assert details["group_probabilities"] == pytest.approx({g: m / total for g, m in means.items()})
     assert details["class_probabilities"] == probs
+
+
+def test_an_uninformative_model_does_not_favour_tumor(monkeypatch):
+    _, details, _ = _run(monkeypatch, {c: 1 / len(CLASS_GROUPS) for c in CLASS_GROUPS})
+    assert list(details["group_probabilities"].values()) == pytest.approx([0.25] * 4)
 
 
 def test_other_fields_null(monkeypatch):

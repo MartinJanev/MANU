@@ -22,6 +22,7 @@ N_SLICES = 11
 IMAGE_SIZE = 448
 MAX_NEW_TOKENS = 4096  # it reasons in <think> before answering; 2048 cut 8/32 eval answers (the card's 3D example: 1024)
 THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+QNA_MAX_NEW_TOKENS = 512  # one question; 4096 would let each of ~16 questions per scan loop for minutes
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 # REASONING_PROMPT of the card's Quick Start (the default prompt of every inference function there)
@@ -105,13 +106,28 @@ class FlemingAdapter:
 
     def predict(self, scan, volumes):
         volume = resize(to01(volumes[0], scan.dataset), INPUT_SHAPE)
-        text = f"{REASONING_PROMPT}\n" + "<image>\n" * N_SLICES + full_prompt(scan.dataset)
+        text = f"{REASONING_PROMPT}\n" + "<image>\n" * N_SLICES + full_prompt(scan.dataset, scan.prior)
         raw = self._generate(volume, text, MAX_NEW_TOKENS)
         if raw.rfind(THINK_OPEN) > raw.rfind(THINK_CLOSE):
             obj, problems = None, ["truncated_think"]  # stopped inside the reasoning: any JSON there is not an answer
         else:
             obj, problems = parse_json_answer(raw)
         return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": SLICES}
+
+    def asker(self, scan, volumes):
+        """One question per call, over the same volume (runner --task qna): the text of <answer>."""
+        volume = resize(to01(volumes[0], scan.dataset), INPUT_SHAPE)
+        head = f"{REASONING_PROMPT}\n" + "<image>\n" * N_SLICES
+
+        def ask(question):
+            raw = self._generate(volume, head + question, QNA_MAX_NEW_TOKENS)
+            close = raw.rfind(THINK_CLOSE)
+            if raw.rfind(THINK_OPEN) > close:
+                return "", None  # stopped inside the reasoning
+            text = raw if close == -1 else raw[close + len(THINK_CLOSE):]
+            return text.replace("<answer>", "").replace("</answer>", "").strip(), None
+
+        return ask
 
 
 if __name__ == "__main__":

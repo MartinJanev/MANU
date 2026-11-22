@@ -2,9 +2,12 @@
 
 Question and option texts are the M3D-family column of the "Шаблони по поле" table in the model notes. Each field
 is one four-option question; every question is asked twice (options in order and reversed) to expose position bias.
+Which of the two orders gives the value alternates with the patient: with a fixed order, a model that always says
+"A" scores 100% on IXI, whose answer (Normal) is option A.
 Standard library only; the model is reached through the `AskFn` callable, so tests need no weights.
 """
 import math
+import zlib
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -47,6 +50,10 @@ BANK: Dict[str, object] = {
         Question("diagnosis_detailed", _TUMOR, ("Germinoma", "Neurocytoma", "Papilloma", "Granuloma"),
                  ("germinoma", "neurocytoma", "papilloma", "granuloma")),
     ],
+    # CT-RATE is chest CT, scored on its own as normal or abnormal
+    "diagnosis_ct": Question("diagnosis_name", "Is this scan normal or abnormal?",
+                             ("Normal", "Abnormal", "Cannot be determined", "Not a medical image"),
+                             ("normal", "other abnormalities", None, None)),
     "diagnosis_detailed_stroke": Question("diagnosis_detailed", "What type of stroke is this?",
                                           ("Ischemic", "Hemorrhagic", "Both", "Cannot be determined"),
                                           ("ischemic", "hemorrhagic", None, None)),
@@ -107,10 +114,11 @@ def _ask_once(q: Question, ask_fn: AskFn, style: str, order: Tuple[int, ...]) ->
     return {"order": list(order), "raw": raw, "index": index, "method": method, "probs": mapped}
 
 
-def ask(q: Question, ask_fn: AskFn, style: str) -> dict:
-    """Ask in original and reversed option order. value/confidence/method come from the original-order ask."""
-    first = _ask_once(q, ask_fn, style, ORIGINAL)
-    second = _ask_once(q, ask_fn, style, REVERSED)
+def ask(q: Question, ask_fn: AskFn, style: str, flip: bool = False) -> dict:
+    """Ask in original and reversed option order. value/confidence/method come from the first ask: the original
+    order, or the reversed one with `flip`."""
+    orders = (REVERSED, ORIGINAL) if flip else (ORIGINAL, REVERSED)
+    first, second = [_ask_once(q, ask_fn, style, order) for order in orders]
     index = first["index"]
     confidence = None
     if index is not None and first["probs"] is not None:
@@ -124,11 +132,11 @@ def ask(q: Question, ask_fn: AskFn, style: str) -> dict:
     }
 
 
-def _walk(levels: List[Question], ask_fn: AskFn, style: str) -> dict:
+def _walk(levels: List[Question], ask_fn: AskFn, style: str, flip: bool) -> dict:
     """Ask levels in turn, descending only while the model chose the level's "Other" option."""
     results = []
     for q in levels:
-        result = ask(q, ask_fn, style)
+        result = ask(q, ask_fn, style, flip)
         results.append(result)
         if result["value"] is not None or result["method"] == "none":
             break
@@ -137,8 +145,10 @@ def _walk(levels: List[Question], ask_fn: AskFn, style: str) -> dict:
     return final
 
 
-def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
-    """(raw values, log per field) from the per-field questions that apply to `dataset`."""
+def interrogate(dataset: str, ask_fn: AskFn, style: str, patient: Optional[str] = None) -> Tuple[dict, dict]:
+    """(raw values, log per field) from the per-field questions that apply to `dataset`. The patient decides
+    which option order comes first; without one, the original."""
+    flip = patient is not None and zlib.crc32(patient.encode()) % 2 == 1
     values: dict = {}
     log: dict = {}
 
@@ -146,30 +156,31 @@ def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
         values[field] = result["value"]
         log[field] = result
 
-    put("modality", ask(BANK["modality"], ask_fn, style))
+    put("modality", ask(BANK["modality"], ask_fn, style, flip))
     values["specialized_sequence"] = None
     if values["modality"] != "CT":
-        put("specialized_sequence", ask(BANK["specialized_sequence"], ask_fn, style))
-    put("plane", ask(BANK["plane"], ask_fn, style))
+        put("specialized_sequence", ask(BANK["specialized_sequence"], ask_fn, style, flip))
+    put("plane", ask(BANK["plane"], ask_fn, style, flip))
 
-    diagnosis = ask(BANK["diagnosis_name"], ask_fn, style)
+    question = BANK["diagnosis_ct" if dataset == "ct_rate" else "diagnosis_name"]
+    diagnosis = ask(question, ask_fn, style, flip)
     put("diagnosis_name", diagnosis)
     values["diagnosis_confidence"] = diagnosis["confidence"]
 
     values["diagnosis_detailed"] = None
     if values["diagnosis_name"] == "tumor":
-        put("diagnosis_detailed", _walk(BANK["diagnosis_detailed"], ask_fn, style))
+        put("diagnosis_detailed", _walk(BANK["diagnosis_detailed"], ask_fn, style, flip))
     elif values["diagnosis_name"] == "stroke":
-        put("diagnosis_detailed", ask(BANK["diagnosis_detailed_stroke"], ask_fn, style))
+        put("diagnosis_detailed", ask(BANK["diagnosis_detailed_stroke"], ask_fn, style, flip))
 
-    severity = ask(BANK["severity_score"], ask_fn, style)
+    severity = ask(BANK["severity_score"], ask_fn, style, flip)
     put("severity_score", severity)
     values["severity_confidence"] = severity["confidence"]
 
     if dataset == "molab":
-        origin = _walk(BANK["primary_origin"], ask_fn, style)
+        origin = _walk(BANK["primary_origin"], ask_fn, style, flip)
         if origin["value"] == "lung":
-            origin["levels"].append(ask(BANK["lung_type"], ask_fn, style))
+            origin["levels"].append(ask(BANK["lung_type"], ask_fn, style, flip))
             origin = dict(origin["levels"][-1], levels=origin["levels"])
         put("primary_origin", origin)
         confidences = [r["confidence"] for r in origin["levels"]]
@@ -178,9 +189,9 @@ def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
         values["subtype_confidence"] = None
     elif dataset == "ms":
         for field in ("ms_type", "ms_lesion_location", "ms_lesion_burden"):
-            put(field, ask(BANK[field], ask_fn, style))
+            put(field, ask(BANK[field], ask_fn, style, flip))
         values["ms_active_lesions"] = None  # not asked: the models get T1W or FLAIR, not the T1WKS (contrast) series
-        probs = diagnosis["answers"][0]["probs"]
+        probs = diagnosis["answers"][0]["probs"]  # already in the original option order
         values["ms_confidence"] = None if probs is None else probs[3]  # the "Multiple sclerosis" option
     values["icd10_code"] = None
     return values, log

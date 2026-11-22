@@ -21,6 +21,7 @@ from common.volume import pick_slices, to01, to_rgb_images
 N_SLICES = 10
 IMAGE_SIZE = 448  # a multiple of 32 (patch 16 x merge 2): qwen-vl-utils keeps 448x448, 196 tokens per frame pair
 MAX_NEW_TOKENS = 2048  # it reasons in <think> before answering
+QNA_MAX_NEW_TOKENS = 512  # one question: room for a short reasoning
 SAMPLE_FPS = 2.0  # the card's 3D example
 IMAGE_PATCH_SIZE = 16  # process_vision_info argument of the card (the vision tower's patch size)
 THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
@@ -103,11 +104,22 @@ class HealthGPTProAdapter:
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         frames = to_rgb_images(vol01, slices, IMAGE_SIZE)
-        text = slice_preface() + full_prompt(scan.dataset)
+        text = slice_preface() + full_prompt(scan.dataset, scan.prior)
         raw, opened, n_tokens = self._generate(frames, text, MAX_NEW_TOKENS)
         obj, problems = answer_values(raw, cut_off=opened and n_tokens >= MAX_NEW_TOKENS)
         return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices, "think_opened": opened,
                            "n_tokens": n_tokens}
+
+    def asker(self, scan, volumes):
+        """One question per call, over the same frames (runner --task qna)."""
+        vol01 = to01(volumes[0], scan.dataset)
+        frames = to_rgb_images(vol01, pick_slices(vol01, N_SLICES), IMAGE_SIZE)
+
+        def ask(question):
+            raw, opened, n = self._generate(frames, slice_preface() + question, QNA_MAX_NEW_TOKENS)
+            return _answer_part(raw, opened and n >= QNA_MAX_NEW_TOKENS) or "", None
+
+        return ask
 
 
 if __name__ == "__main__":

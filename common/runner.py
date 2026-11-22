@@ -37,7 +37,8 @@ from typing import Protocol
 import numpy as np
 
 from common.datasets import DATASETS, Scan, find_scans, ground_truth, load_splits
-from common.schema import build_record, normalize_values
+from common.qna import interrogate
+from common.schema import PRIOR, build_record, normalize_values
 from common.volume import load_canonical
 from common.torch_compat import alias_transform_get_item_to_index
 
@@ -46,6 +47,10 @@ alias_transform_get_item_to_index()
 
 SPLIT_NAMES = ("dev", "eval", "paper", "full")  # eval: the 30-patient pilot
 MODES = ("full_json", "qna_per_field", "findings_then_extract", "clip_or_heads")
+
+
+TASKS = ("full", "qna", "prior")  # --task; without it a model runs in its own mode
+NATIVE_TASK = {"full_json": "full", "qna_per_field": "qna"}
 
 
 class PredictionError(Exception):
@@ -68,6 +73,38 @@ class Adapter(Protocol):
     def predict(self, scan: Scan, volumes: list) -> tuple:
         """volumes: load_canonical arrays of scan.files. Returns (raw values, JSON-serialisable details)."""
         ...
+
+
+class _TaskAdapter:
+    """A full-prompt adapter in another task: "qna" (the question bank through its asker) or "prior" (its own
+    predict, with the prompt stating the diagnosis). Results under <name>-<task>."""
+
+    def __init__(self, adapter, task):
+        self.adapter, self.task = adapter, task
+        self.name = f"{adapter.name}-{task}"
+        self.model_id = adapter.model_id
+        self.mode = "qna_per_field" if task == "qna" else f"{adapter.mode}_prior"
+
+    def load(self):
+        self.adapter.load()
+
+    def predict(self, scan, volumes):
+        if self.task == "prior":
+            return self.adapter.predict(dataclasses.replace(scan, prior=True), volumes)
+        return interrogate(scan.dataset, self.adapter.asker(scan, volumes), "A", scan.patient)
+
+
+def for_task(adapter, task, datasets):
+    """The adapter that runs `task`; ValueError when this model or these datasets cannot."""
+    if task is None or NATIVE_TASK.get(adapter.mode) == task:
+        return adapter
+    if adapter.mode != "full_json" or task not in ("qna", "prior"):
+        raise ValueError(f"{adapter.name} ({adapter.mode}) cannot run --task {task}")
+    if task == "prior" and not set(datasets) <= set(PRIOR):
+        raise ValueError(f"--task prior needs --datasets within {','.join(PRIOR)}, got {list(datasets)}")
+    if task == "qna" and not hasattr(adapter, "asker"):
+        raise ValueError(f"{adapter.name} has no asker() for --task qna")
+    return _TaskAdapter(adapter, task)
 
 
 def _read_jsonl(path):
@@ -219,7 +256,8 @@ def _predict(adapter, name, scan, volumes_fn, row_index, image_path, metadata):
 
 
 def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
-        limit=None, controls=False, ms_flair=False, fresh=False):
+        limit=None, controls=False, ms_flair=False, fresh=False, task=None):
+    adapter = for_task(adapter, task, datasets)
     if ms_flair and list(datasets) != ["ms"]:
         raise ValueError(f"--ms-flair needs the datasets to be exactly ['ms'], got {list(datasets)}")
     name = adapter.name + ("-flair" if ms_flair else "")
@@ -306,6 +344,8 @@ def main(adapter, argv=None):
     p.add_argument("--reference", default="/reference")
     p.add_argument("--results", default="/results")
     p.add_argument("--splits", default="/manu/splits.json")
+    p.add_argument("--task", choices=TASKS, default=None,
+                   help="qna or prior on a full-prompt model (results under <model>-<task>); default: its own mode")
     args = p.parse_args(argv)
     datasets = [d for d in args.datasets.split(",") if d]
     unknown = [d for d in datasets if d not in DATASETS]
@@ -315,4 +355,4 @@ def main(adapter, argv=None):
         p.error("--ms-flair needs --datasets ms (FLAIR exists only for MS; results go under <model>-flair)")
     run(adapter, split=args.split, datasets=datasets, data_dir=args.data, reference_dir=args.reference,
         results_dir=args.results, splits=load_splits(args.splits), limit=args.limit,
-        controls=args.controls, ms_flair=args.ms_flair, fresh=args.fresh)
+        controls=args.controls, ms_flair=args.ms_flair, fresh=args.fresh, task=args.task)

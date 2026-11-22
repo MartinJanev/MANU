@@ -226,7 +226,7 @@ class Med2E3Adapter:
         def ask_fn(question):
             return self._generate(volume, IMAGE3D_PREFIX + question)
 
-        values, log = interrogate(scan.dataset, ask_fn, "A")
+        values, log = interrogate(scan.dataset, ask_fn, "A", scan.patient)
         return values, dict(log, text_mlp_source=self.text_mlp_source)  # field logs + where text_mlp came from
 
 
