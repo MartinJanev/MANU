@@ -53,7 +53,9 @@ run "${EXEC[@]}" bash -c "pip list --format=freeze | grep -E '^(torch|torchvisio
 
 # 3. Weights (offline in jobs, so fetch them here)
 for repo in ${HF_REPOS:-}; do
-    run "${EXEC[@]}" python3 -c "from huggingface_hub import snapshot_download; snapshot_download('$repo')"
+    ignore=
+    [ -z "${HF_IGNORE:-}" ] || ignore=", ignore_patterns='$HF_IGNORE'.split()"  # optional, space-separated
+    run "${EXEC[@]}" python3 -c "from huggingface_hub import snapshot_download; snapshot_download('$repo'$ignore)"
 done
 
 # 4. Git repos: url@commit -> third_party/<repo name>
