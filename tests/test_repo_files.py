@@ -18,3 +18,11 @@ def test_splits_json():
                 "ms": ["patient09", "patient10", "patient11"], "ct_rate": ["valid_2", "valid_3", "valid_4"]}
     for d, patients in s["eval"].items():
         assert set(original[d]) <= set(patients) and not set(patients) & set(s["dev"][d])
+
+
+def test_paper_split_is_frozen():
+    s = json.loads((REPO / "splits.json").read_text())
+    paper = s["paper"]
+    assert {d: len(set(p)) for d, p in paper.items()} == {"ixi": 120, "molab": 75, "ms": 30, "ct_rate": 60}
+    assert not set(paper["ixi"]) & set(s["dev"]["ixi"] + s["eval"]["ixi"])  # unseen before the paper's runs
+    assert not set(paper["ct_rate"]) & set(s["dev"]["ct_rate"])
