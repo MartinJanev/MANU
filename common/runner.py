@@ -44,6 +44,7 @@ from common.torch_compat import alias_transform_get_item_to_index
 # Before any adapter imports transformers: the NGC 24.12 image's torch needs it (see common/torch_compat.py)
 alias_transform_get_item_to_index()
 
+SPLIT_NAMES = ("dev", "eval", "paper", "full")  # eval: the 30-patient pilot
 MODES = ("full_json", "qna_per_field", "findings_then_extract", "clip_or_heads")
 
 
@@ -293,7 +294,7 @@ def run(adapter, split, datasets, data_dir, reference_dir, results_dir, splits,
 
 def main(adapter, argv=None):
     p = argparse.ArgumentParser(description=f"Run {adapter.name} over a dataset split.")
-    p.add_argument("--split", required=True, choices=("dev", "eval", "full"))
+    p.add_argument("--split", required=True, choices=SPLIT_NAMES)
     p.add_argument("--datasets", default=",".join(DATASETS), help="comma-separated keys of DATASETS")
     p.add_argument("--limit", type=int, default=None, help="only the first N unfinished scans per dataset")
     p.add_argument("--controls", action="store_true", help="also write one blank-volume control per dataset")

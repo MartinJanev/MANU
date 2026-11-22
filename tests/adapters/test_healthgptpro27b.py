@@ -93,7 +93,7 @@ def test_ten_frames_as_one_video(monkeypatch):
     assert len(frames) == 10
     assert all(im.mode == "RGB" and im.size == (448, 448) for im in frames)
     assert videos[0]["sample_fps"] == 2.0
-    assert content[1]["text"] == slice_preface(10) + full_prompt("ms") == details["prompt"]
+    assert content[1]["text"] == slice_preface() + full_prompt("ms") == details["prompt"]
     assert template_kwargs == {"tokenize": False, "add_generation_prompt": True}
     assert log["vision"][0] is messages
     assert len(details["slices"]) == 10
@@ -128,7 +128,7 @@ def test_parses_fenced_json(monkeypatch):
     assert details["raw"] == REASONING + FENCED
     frames, text, max_new_tokens = calls[0]
     assert len(frames) == 10 and max_new_tokens == 2048
-    assert text == slice_preface(10) + full_prompt("molab")
+    assert text == slice_preface() + full_prompt("molab")
 
 
 def test_reopened_think_is_skipped(monkeypatch):

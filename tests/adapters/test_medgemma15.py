@@ -79,12 +79,12 @@ def test_encode_is_a_jpeg_of_the_slice():
 
 def test_prompt_split_keeps_every_word_of_the_prompt():
     for dataset in ("ixi", "molab", "ms", "ct_rate"):
-        instruction, query = split_prompt(dataset, 85)
+        instruction, query = split_prompt(dataset)
         assert instruction.startswith("You are an expert neuroradiologist")
-        assert instruction.endswith("The images are 85 axial slices of the same 3D scan, "
+        assert instruction.endswith("The images are axial slices of the same 3D scan, "
                                     "ordered from inferior to superior.")
         assert query.startswith("\n\nOutput ONLY this JSON schema below")
-        assert instruction.replace("The images are 85 axial slices of the same 3D scan, ordered from inferior "
+        assert instruction.replace("The images are axial slices of the same 3D scan, ordered from inferior "
                                    "to superior.", "") + query[2:] == full_prompt(dataset)
 
 

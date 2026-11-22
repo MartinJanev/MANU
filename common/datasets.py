@@ -24,6 +24,8 @@ DATASETS = {
     },
 }
 
+MS_PATIENT_INFO = "open_ms_data/cross_sectional/patient_info.csv"
+MS_TYPES = {"RR": "SMRR", "SP": "SMSP", "PR": "SMPP"}  # CIS and N/A are outside the schema: not scored
 CT_RATE_LABELS = "ct_rate/dataset/multi_abnormality_labels/valid_predicted_labels.csv"
 
 
@@ -94,7 +96,13 @@ def find_scans(data_dir, dataset, split, splits, ms_flair=False):
         if missing:
             raise ValueError(f"{dataset}: no scan files for {split} patients {missing} under {pattern}")
         scans = [s for s in scans if s.patient in set(wanted)]
-    return sorted(scans, key=lambda s: s.image_path)
+    scans = sorted(scans, key=lambda s: s.image_path)
+    if split == "paper":  # one scan per patient: the first by date (the file names sort by it)
+        first = {}
+        for s in scans:
+            first.setdefault(s.patient, s)
+        scans = list(first.values())
+    return scans
 
 
 _REFERENCE_CACHE = {}
@@ -166,9 +174,23 @@ def _ct_rate_truth(scan, data_dir):
             "modality_subtype": None, "icd10_code": None, "abnormalities": abnormalities}
 
 
+def _ms_type(patient, data_dir):
+    path = os.path.join(data_dir, MS_PATIENT_INFO)
+    if not os.path.isfile(path):
+        _warn_once(f"MS patient info not found: {path}; ms_type set to null")
+        return None
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        types = {int(r["patient_id"]): r["ms_type"] for r in csv.DictReader(f) if r["patient_id"].strip().isdigit()}
+    return MS_TYPES.get(types.get(int(re.search(r"\d+", patient).group())))
+
+
 def ground_truth(scan, reference_dir, data_dir):
-    """Metadata for the record's input.metadata. IXI/MOLAB/MS come from the colleagues' reference files;
-    CT-RATE reads its abnormality labels from data_dir."""
+    """Metadata for the record's input.metadata. IXI/MOLAB/MS come from the colleagues' reference files, except
+    ms_type: theirs is MSLesSeg's clinical table joined on the patient number (other patients), so it is read from
+    open_ms_data's own patient_info.csv. CT-RATE reads its abnormality labels from data_dir."""
     if scan.dataset == "ct_rate":
         return _ct_rate_truth(scan, data_dir)
-    return dict(metadata_for(scan.image_path, load_reference(reference_dir, scan.dataset)))
+    meta = dict(metadata_for(scan.image_path, load_reference(reference_dir, scan.dataset)))
+    if scan.dataset == "ms":
+        meta["ms_type"] = _ms_type(scan.patient, data_dir)
+    return meta

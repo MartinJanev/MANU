@@ -49,10 +49,10 @@ and `normalize_values` maps raw answers onto `VOCAB`. Each dataset gets `<name>_
 with tags `healthy`, `brain_metastases`, `ms`, `ct_rate`. Metadata and truth come from the colleagues' files in
 `reference/` (`common.datasets.metadata_for`); CT-RATE truth comes from its labels CSV.
 
-**Input path.** `common.volume.load_canonical` (one fixed orientation) → `to01` (percentile scaling for MRI, a CT
+**Input path.** `common.volume.load_canonical` (one fixed orientation, square pixels, square frame) → `to01` (percentile scaling for MRI, a CT
 window for CT-RATE) → whatever the model needs (`pick_slices` + `to_rgb_images` for 2D VLMs, `resize` for 3D).
 
-**Modes** (`runner.MODES`): `full_json` (prompt from `common/prompts/full_json_<dataset>.txt`, parsed by
+**Modes** (`runner.MODES`): `full_json` (prompt from `common/prompts/full_json.txt`, parsed by
 `common.parse.parse_json_answer`), `qna_per_field` (the `common/qna.py` bank, every question asked in original and
 reversed option order, `parse_choice`), `findings_then_extract` (free report → `extract_from_report`),
 `clip_or_heads`.
@@ -79,6 +79,11 @@ Pitfalls and records the sources read (model card, repo commit) and every deviat
 
 ## Things that matter when reading results
 
+- The paper's runs are split `paper` (one scan per patient; `tools/make_split.py --paper`). Split `eval` is the
+  30-patient pilot of 21 Nov 2026: per-dataset prompts (they named the diagnosis), stretched images, MSLesSeg's
+  `ms_type` labels. Never mix or compare the two, and never rerun `eval` with today's code into the same folder.
+- One prompt for every dataset, no slice count and no dataset-specific wording: each diagnosis is its own dataset,
+  so anything chosen per dataset is a label.
 - Decoding is greedy in every adapter: rerunning the same setup reproduces the outputs. Change the input or prompt
   instead of repeating a run.
 - After a parser fix, re-score with `tools/reparse.py` instead of rerunning on the GPU. `fetch_results.sh` uses

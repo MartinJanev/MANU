@@ -31,7 +31,7 @@ Deviations / choices:
   notebook's `post_process_image_text_to_text` + stripping the echoed prompt (same text).
 - Prompt: the colleagues' full-JSON prompt of `common/prompts/` (as every other model). The text before
   "Output ONLY this JSON schema below" (role and task lines, i.e. the system text at the start of the user text)
-  plus `slice_preface(n)` is the instruction; the rest (schema, examples) comes after the slices.
+  plus `slice_preface()` is the instruction; the rest (the schema) comes after the slices.
 - Slice order: our canonical stack, inferior -> superior (the notebook orders by DICOM InstanceNumber).
 - Blank control (zeros): MRI min-max has no range, so the slices are black; CT zeros are 0 HU through the windows.
 - `diagnosis_name` goes through `evaluation.evaluate.norm_diag` ("Normal" -> normal, "Brain tumor" -> tumor) before

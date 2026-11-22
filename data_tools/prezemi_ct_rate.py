@@ -7,7 +7,7 @@ does not exist. Needs only huggingface_hub (imported lazily; works with 0.16.4) 
 an account that accepted the dataset terms.
 
   export HF_TOKEN=...
-  python3 data_tools/prezemi_ct_rate.py [--split dev|eval|all] [--data data] [--splits splits.json]
+  python3 data_tools/prezemi_ct_rate.py [--split dev|eval|paper|all] [--data data] [--splits splits.json]
 """
 import argparse
 import csv
@@ -23,6 +23,7 @@ LABELS = "dataset/multi_abnormality_labels/valid_predicted_labels.csv"
 EXTRA_FILES = (LABELS,
                "dataset/radiology_text_reports/validation_reports.csv",
                "dataset/metadata/validation_metadata.csv")
+SPLITS = ("dev", "eval", "paper", "all")
 PARENTS = ("dataset/valid_fixed", "dataset/valid")
 
 
@@ -144,7 +145,7 @@ def summarize(selected, data_dir):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--split", choices=("dev", "eval", "all"), default="all")
+    p.add_argument("--split", choices=SPLITS, default="all")
     p.add_argument("--data", default=str(REPO_ROOT / "data"))
     p.add_argument("--splits", default=str(REPO_ROOT / "splits.json"))
     args = p.parse_args(argv)

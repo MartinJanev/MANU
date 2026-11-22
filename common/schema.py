@@ -60,12 +60,15 @@ ICD10 = re.compile(r"^[A-Z]\d{2}(\.\d+)?$")
 
 
 def full_prompt(dataset):
-    with open(os.path.join(PROMPT_DIR, f"full_json_{dataset}.txt"), encoding="utf-8") as f:
+    """The one full-JSON prompt. The same text for every dataset: each diagnosis is its own dataset, so a
+    per-dataset prompt tells the model the answer (the pilot's did)."""
+    with open(os.path.join(PROMPT_DIR, "full_json.txt"), encoding="utf-8") as f:
         return f.read()
 
 
-def slice_preface(n):
-    return f"The images are {n} axial slices of the same 3D scan, ordered from inferior to superior.\n"
+def slice_preface():
+    # no slice count: where a model takes every slice, the count differs per dataset
+    return "The images are axial slices of the same 3D scan, ordered from inferior to superior.\n"
 
 
 def _categorical(key, value):

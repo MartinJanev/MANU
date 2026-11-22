@@ -19,7 +19,8 @@ cluster only (not in git): data/ hf_cache/ pyuser/<model>/ third_party/ containe
 
 ## Model status
 
-Eval split (30 patients per dataset), T1 for every dataset unless marked FLAIR; numbers from
+**Pilot, superseded by the split `paper`** (per-dataset prompts, stretched images and wrong MS subtype labels;
+do not cite these numbers as results). Eval split (30 patients per dataset), T1 for every dataset unless marked FLAIR; numbers from
 `results/report_eval.md`. Pooled bal.acc 33.3% = no signal. Blank agreement = share of answers the blank-volume
 control repeats (high = the image is ignored). Every adapter stays in `models/`: "not usable here" means no answer
 that depends on the image on these brain MRI datasets through this pipeline, not that the model cannot work on
@@ -45,7 +46,8 @@ whenever it sees FLAIR scores the same as one that reads the lesions.
 ## Splits
 
 `splits.json` is the only place that defines which patients are used.
-`dev` is the small smoke-test set, `eval` the full comparison set.
+`dev` is the small smoke-test set, `eval` the 30-patient pilot, `paper` the comparison set of the paper
+(one scan per patient; `python3 tools/make_split.py --paper` on the login node).
 
 ## Running a model
 

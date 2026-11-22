@@ -15,7 +15,7 @@ Sources read (2026-11-20):
 
 Copied from documentation: the README's video inference calls (`models/qwen3vl8b/run.py`, `_generate`).
 Same as HealthGPT-Pro-27B (fair comparison): `pick_slices`, 10 frames, 448x448, `"sample_fps": 2.0`,
-`slice_preface(10)` + the full-JSON prompt.
+`slice_preface()` + the full-JSON prompt.
 Choices: `dtype=torch.bfloat16`, `attn_implementation="sdpa"`, `device_map="cuda"` (README: `dtype="auto"`,
 `device_map="auto"`, flash-attention 2 recommended but not installed); greedy `do_sample=False, num_beams=1`,
 max_new_tokens 1024 (an Instruct model, no reasoning block). No JSON, or JSON without one valid schema value:

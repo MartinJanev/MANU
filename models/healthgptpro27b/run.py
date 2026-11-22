@@ -103,7 +103,7 @@ class HealthGPTProAdapter:
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         frames = to_rgb_images(vol01, slices, IMAGE_SIZE)
-        text = slice_preface(N_SLICES) + full_prompt(scan.dataset)
+        text = slice_preface() + full_prompt(scan.dataset)
         raw, opened, n_tokens = self._generate(frames, text, MAX_NEW_TOKENS)
         obj, problems = answer_values(raw, cut_off=opened and n_tokens >= MAX_NEW_TOKENS)
         return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices, "think_opened": opened,

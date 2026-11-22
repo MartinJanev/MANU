@@ -75,6 +75,8 @@ def test_ground_truth_from_reference(tree):
     (molab, _) = find_scans(tree, "molab", "dev", dev)
     assert ground_truth(molab, ref, tree)["primary_origin"] == "breast"
     (ms,) = find_scans(tree, "ms", "dev", dev)
+    info = Path(tree) / "open_ms_data/cross_sectional/patient_info.csv"
+    info.write_text("patient_id,age,sex,ms_type,edss,criteria\n9,40,F,RR,2.0,x\n")
     assert ground_truth(ms, ref, tree)["ms_type"] == "SMRR"
     (ixi,) = find_scans(tree, "ixi", "dev", dev)
     assert ground_truth(ixi, ref, tree)["class"] == "normal"

@@ -85,7 +85,7 @@ def test_classes_and_prompts():
 
 def test_volume_is_in_hlip_loader_axes(tmp_path):
     # An LPS affine, so the reorientation is not the identity.
-    data = np.random.default_rng(1).random((6, 5, 4), dtype=np.float32)
+    data = np.random.default_rng(1).random((6, 6, 4), dtype=np.float32)
     path = str(tmp_path / "lps.nii.gz")
     nib.save(nib.Nifti1Image(data, np.diag([-1.0, -1.0, 1.0, 1.0])), path)
     # load_nifti_file of HLIP's data/pub_brain_5/*/process.py (tag v1.0): SimpleITK DICOMOrient to 'RPI', then

@@ -9,10 +9,13 @@ from scipy import ndimage
 
 
 def load_canonical(path):
-    """NIfTI file -> float32 (D, H, W).
+    """NIfTI file -> float32 (D, H, W), slices with square pixels and a square frame.
 
     D = axial slices feet->head, H = rows front->back, W = columns patient right->left
     (the way a radiologist views an axial slice), whatever orientation the file stores.
+    In-plane only: resampled to the finer of the two spacings, then padded with the volume minimum (air). Every
+    adapter resizes a slice to a square, so without this a brain is stretched by an amount that differs per dataset
+    (1.35x on IXI). The depth axis is left alone: each model has its own slice count.
     """
     # RAS first, so sagittal (IXI) and axial files end up with the same layout.
     img = nib.as_closest_canonical(nib.load(path))
@@ -22,7 +25,22 @@ def load_canonical(path):
     # Same as load_volume of the earlier RadFM runner (git show 45b8448:models/radfm/run.py): (x, y, z) -> (rows, cols, depth) ...
     vol = vol[::-1, ::-1, :].transpose(1, 0, 2)
     # ... then depth moved to axis 0.
-    return np.ascontiguousarray(vol.transpose(2, 0, 1), dtype=np.float32)
+    dx, dy = img.header.get_zooms()[:2]
+    vol = _square_pixels(vol.transpose(2, 0, 1), float(dy), float(dx))
+    return np.ascontiguousarray(vol, dtype=np.float32)
+
+
+def _square_pixels(vol, dy, dx):
+    """(D, H, W) with row spacing dy and column spacing dx -> square pixels, padded to H == W."""
+    if dy > 0 and dx > 0 and abs(dy - dx) > 0.01 * min(dy, dx):
+        fine = min(dy, dx)
+        vol = ndimage.zoom(vol, (1, dy / fine, dx / fine), order=1)
+    h, w = vol.shape[1:]
+    if h == w:
+        return vol
+    size = max(h, w)
+    top, left = (size - h) // 2, (size - w) // 2
+    return np.pad(vol, ((0, 0), (top, size - h - top), (left, size - w - left)), constant_values=vol.min())
 
 
 def normalize01(vol, lo=0.5, hi=99.5):

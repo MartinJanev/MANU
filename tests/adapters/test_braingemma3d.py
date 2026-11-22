@@ -56,7 +56,7 @@ def test_report_goes_through_shared_extractor(monkeypatch):
 
 def test_volume_is_in_model_loader_axes(monkeypatch, tmp_path):
     # A BraTS-like LPS affine, so the reorientation to RAS is not the identity.
-    data = np.random.default_rng(1).random((6, 5, 4), dtype=np.float32)
+    data = np.random.default_rng(1).random((6, 6, 4), dtype=np.float32)
     path = str(tmp_path / "lps.nii.gz")
     nib.save(nib.Nifti1Image(data, np.diag([-1.0, -1.0, 1.0, 1.0])), path)
     # What braingemma3d_architecture.load_nifti_volume does to a BraTS file before scaling and resizing.

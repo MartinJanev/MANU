@@ -73,12 +73,12 @@ def encode(data):
     return f"data:image/{fmt};base64,{encoded_string}"
 
 
-def split_prompt(dataset, n_slices):
+def split_prompt(dataset):
     """(instruction, schema text): the prompt's role and task lines plus the slice preface go before the slices,
     the schema (from "Output ONLY this JSON schema below") after them, as the notebook's instruction / query_text."""
     prompt = full_prompt(dataset)
     cut = prompt.index(SCHEMA_START)
-    return prompt[:cut] + slice_preface(n_slices).rstrip("\n"), "\n\n" + prompt[cut:]
+    return prompt[:cut] + slice_preface().rstrip("\n"), "\n\n" + prompt[cut:]
 
 
 def build_messages(slice_uris, instruction, query_text):
@@ -148,7 +148,7 @@ class MedGemma15Adapter:
         vol = volumes[0]
         indices = sample_slices(len(vol))
         slices = to_rgb_slices(vol, scan.dataset, indices)
-        instruction, query_text = split_prompt(scan.dataset, len(indices))
+        instruction, query_text = split_prompt(scan.dataset)
         messages = build_messages([encode(s) for s in slices], instruction, query_text)
         raw = self._generate(messages)
         details = {"prompt": {"instruction": instruction, "query": query_text}, "raw": raw, "slices": indices}

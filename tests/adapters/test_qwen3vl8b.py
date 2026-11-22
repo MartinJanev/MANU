@@ -38,7 +38,7 @@ def test_same_frames_as_healthgpt(monkeypatch):
     frames, text = calls[0]
     assert len(frames) == 10 and all(f.mode == "RGB" and f.size == (448, 448) for f in frames)
     assert details["slices"] == pick_slices(to01(_volume(), "molab"), 10)
-    assert text.startswith("The images are 10 axial slices") and text.endswith(full_prompt("molab"))
+    assert text.startswith("The images are axial slices") and text.endswith(full_prompt("molab"))
 
 
 def test_parses_json(monkeypatch):

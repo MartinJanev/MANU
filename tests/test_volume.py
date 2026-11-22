@@ -18,7 +18,7 @@ def test_canonical_axes(tmp_path):
     data[0, 4, 5] = 1  # most left, most anterior, most superior
     out = load_canonical(save(data, np.eye(4), tmp_path))
     assert out.dtype == np.float32
-    assert out.shape == (6, 5, 4) and out[5, 0, 3] == 1
+    assert out.shape == (6, 5, 5) and out[5, 0, 3] == 1  # padded to square, one column on the left
 
 
 def test_sagittal_affine_gives_axial_stack(tmp_path):
@@ -34,8 +34,8 @@ def test_nan_and_4d(tmp_path):
     data = np.ones((3, 4, 5, 1), np.float32)
     data[0, 0, 0, 0] = np.nan
     out = load_canonical(save(data, np.eye(4), tmp_path))
-    assert out.shape == (5, 4, 3) and not np.isnan(out).any()
-    assert out.sum() == 3 * 4 * 5 - 1
+    assert out.shape == (5, 4, 4) and not np.isnan(out).any()
+    assert out.sum() == 3 * 4 * 5 - 1  # padded with the minimum, 0 here
 
 
 def test_normalize01_range():

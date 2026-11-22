@@ -2,6 +2,7 @@
 
 Standard library only. Values returned here are raw; common.schema.normalize_values validates them.
 """
+import collections
 import json
 import re
 
@@ -39,6 +40,33 @@ def _first_balanced_object(text):
     return text[start:]  # unbalanced (truncated answer): let json.loads reject it
 
 
+def _following_answers(rest):
+    """The further complete answer objects after the first one (schema echoes and broken ones left out)."""
+    found = []
+    while True:
+        candidate = _first_balanced_object(rest)
+        if candidate is None:
+            return found
+        rest = rest[rest.find(candidate) + len(candidate):]
+        try:
+            obj = json.loads(_TRAILING_COMMA.sub(r"\1", candidate))
+        except ValueError:
+            continue
+        name = obj.get("diagnosis_name")
+        if "diagnosis_name" in obj and not (isinstance(name, str) and "|" in name):
+            found.append(obj)
+
+
+def _majority(objects):
+    """Per field the value of a strict majority of the objects, else None (abstain)."""
+    merged = {}
+    for key in objects[0]:
+        votes = collections.Counter(json.dumps(o.get(key), sort_keys=True) for o in objects)
+        value, n = votes.most_common(1)[0]
+        merged[key] = json.loads(value) if n > len(objects) / 2 else None
+    return merged
+
+
 def parse_json_answer(text):
     """(object or None, problems) with problems a subset of {"no_json", "invalid_json", "echo:<field>"}."""
     text = _THINK.sub("", text)
@@ -54,6 +82,10 @@ def parse_json_answer(text):
     except ValueError:
         return None, ["invalid_json"]
     problems = []
+    several = [obj, *_following_answers(text[text.find(candidate) + len(candidate):])]
+    if len(several) > 1 and "diagnosis_name" in obj:  # QoQ-Med writes one object per slice
+        obj = _majority(several)
+        problems.append("multiple_objects")
     for key, value in obj.items():
         if isinstance(value, str) and ("<" in value or "|" in value):
             obj[key] = None
@@ -94,7 +126,7 @@ TUMOR = re.compile(r"metasta|tumou?r|neoplas|\bmass\b|glioma|meningioma|glioblas
 MS = re.compile(r"multiple sclerosis|demyelinat")
 STROKE = re.compile(r"infarct|isch(a)?emi|stroke|h(a)?emorrhag")
 NORMAL = re.compile(r"no (acute |significant )?(intracranial )?abnormalit|unremarkable|within normal limits"
-                    r"|normal (brain|study|mri)")
+                    r"|normal (brain|study|mri|head (ct|mri))|parenchyma (appears|is) normal")
 OTHER = re.compile(r"lesion|hyperintens|enhanc|abnormal")
 DETAILED_TUMOR = [("glioma", "glioma"), ("meningioma", "meningioma"), ("pituitary", "pituitary_tumor"),
                   ("schwannoma", "schwannoma"), ("medulloblastoma", "medulloblastoma"),

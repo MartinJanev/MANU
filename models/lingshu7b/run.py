@@ -32,7 +32,7 @@ class LingshuAdapter:
         vol01 = to01(volumes[0], scan.dataset)
         slices = pick_slices(vol01, N_SLICES)
         images = to_rgb_images(vol01, slices, IMAGE_SIZE)
-        text = slice_preface(N_SLICES) + full_prompt(scan.dataset)
+        text = slice_preface() + full_prompt(scan.dataset)
         raw = self._generate(images, text)
         obj, problems = parse_json_answer(raw)
         return obj or {}, {"prompt": text, "raw": raw, "problems": problems, "slices": slices}

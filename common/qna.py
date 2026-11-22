@@ -179,7 +179,7 @@ def interrogate(dataset: str, ask_fn: AskFn, style: str) -> Tuple[dict, dict]:
     elif dataset == "ms":
         for field in ("ms_type", "ms_lesion_location", "ms_lesion_burden"):
             put(field, ask(BANK[field], ask_fn, style))
-        values["ms_active_lesions"] = None  # open_ms_data has no contrast, so the question is not asked
+        values["ms_active_lesions"] = None  # not asked: the models get T1W or FLAIR, not the T1WKS (contrast) series
         probs = diagnosis["answers"][0]["probs"]
         values["ms_confidence"] = None if probs is None else probs[3]  # the "Multiple sclerosis" option
     values["icd10_code"] = None
