@@ -11,6 +11,9 @@ config.json and modeling_m3d_lamed.py of the checkpoint.
 
 ## Dev run
 
+- Job 2899 (2026-11-23): loads (6 shards) with transformers 4.39.1, every answer parses (the March runs with 4.43.3 parsed none). Modality "CT" for every MRI scan; it picks the same option position in both orders, so the answer follows the patient's option order. Passes the gate.
+
+
 Not run yet.
 
 ## Eval run

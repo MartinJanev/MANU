@@ -1,7 +1,7 @@
 # Protocol of the paper's runs
 
-**Status: DRAFT until the tag `paper-freeze` exists (planned Mon 2026-11-23, 22:00).** Until then only technical
-problems seen on the dev patients may change it. After the tag nothing here, in `common/`, in `models/` or in
+**Status: FROZEN at the tag `paper-freeze` (Mon 2026-11-23), after the dev runs (jobs 2896-2920). Only technical
+problems seen on the dev patients changed it before the tag. After the tag nothing here, in `common/`, in `models/` or in
 `splits.json` changes before the runs end; a forced change is listed under Deviations with its date and reason.
 
 ## Question
@@ -29,6 +29,22 @@ without errors on every dev dataset, (3) its answers parse on at least one datas
 for a scan and a blank volume in every field, (5) where the adapter can run the authors' example (RadFM), that
 example gives a sensible, image-dependent answer. A model that fails stays in the paper under failure modes as
 "could not be validated". Diagnostic accuracy on dev is never a criterion.
+
+## Validation on dev (2026-11-23)
+
+All 25 dev jobs finished (exit 0). Criteria 1-4 hold for every model and condition. RadFM fails criterion 5: on its
+authors' Quick_demo image and question ("Can you identify any visible signs of Cardiomegaly in the image?") it
+answers "yes", and "yes" again to a blank image of the same size. RadFM is still run on the split paper and reported,
+marked "could not be validated", and left out of the pairwise comparisons (`stats.NOT_VALIDATED`).
+
+Seen on dev and reported as model behaviour, not changed: M3D-LaMed-Phi-3, M3D-LaMed-Llama-2 and Med-2E3 answer
+"CT" for brain MRI; M3D-LaMed-Llama-2 picks the same option position in both orders; Fleming-VL's reasoning can
+loop until the token limit; HealthGPT-Pro once answered only "T1".
+
+Changed before the freeze, technical only: `parse_choice` reads a letter written with its own option ("**C.
+T2-weighted**") and a first bold option, as MedGemma answers Q&A in explanatory prose (dev: 88 -> 121 of 126 answers
+parsed; QoQ-Med-VL 135 -> 141 of 142; no other model's readings changed). Checked against MOLAB's data paper: the
+published scans are the segmented post-contrast T1 series, whatever their series name says.
 
 ## Conditions
 
@@ -69,4 +85,4 @@ answer) and the chest question of CT-RATE, which is scored separately.
 
 ## Deviations
 
-None so far.
+None so far. Main and second stage submitted together after the freeze (expected about 14 and 21 GPU hours).

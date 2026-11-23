@@ -63,6 +63,9 @@ as for every model.
 
 ## Dev run
 
+- Job 2896 (2026-11-23), the authors' Quick_demo example through this adapter: "yes" for the image and "yes" for a blank image of the same size. Job 2900 (dev): 47 of 140 answers empty, reports "Finding: nan" and, for a brain MRI, "a focal lesion ... in the left 2nd metatarsal bone". Fails the validation gate (PROTOCOL.md); run on the split paper and reported as not validated.
+
+
 ## Eval run
 
 - 30-patient eval split (2026-11-21, 230 records, 100% valid): `diagnosis_name` is "normal" for every scan of

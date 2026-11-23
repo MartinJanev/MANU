@@ -43,6 +43,9 @@ Before running: nothing known (the card shows no access gate; if the download as
 
 ## Dev run
 
+- Job 2907 (2026-11-23): 3 of 4 MOLAB dev scans `truncated_think`: the reasoning repeats one sentence ("The thirtieth image ...") until 4096 tokens. Model behaviour; kept.
+
+
 ## Eval run
 
 - Job 2761 (2026-11-20, `max_new_tokens=2048`): 8 of 32 answers `truncated_think` (the reasoning never closed), 2

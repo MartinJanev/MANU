@@ -94,9 +94,26 @@ def parse_json_answer(text):
 
 
 def parse_choice(text, options, style):
-    """Index of the chosen option, or None (echo of every option, no answer, or an ambiguous answer)."""
+    """Index of the chosen option, or None (echo of every option, no answer, or an ambiguous answer).
+
+    In order: a leading letter; a letter written with its own option ("**C. T2-weighted**"; a letter with another
+    option's text is no answer); the first bold text that is an option; else an option named alone. A text that
+    names every option is an echo of the question unless one option is marked as above."""
     low = text.lower()
-    if all(o.lower() in low for o in options):
+    claims = set()
+    if style == "A":
+        claims = {(i, j) for i in range(len(options)) for j, o in enumerate(options)
+                  if re.search(rf"(?<![A-Za-z]){'ABCD'[i]}[.)]\s*(?i:{re.escape(o)})(?!\w)", text)}
+    marked = None
+    if claims and all(i == j for i, j in claims) and len({j for _, j in claims}) == 1:
+        marked = next(iter(claims))[1]
+    elif not claims:
+        for bold in re.findall(r"\*\*(.+?)\*\*", text):
+            named = [j for j, o in enumerate(options) if bold.strip(" .:").lower() == o.lower()]
+            if named:
+                marked = named[0]
+                break
+    if all(o.lower() in low for o in options) and marked is None:
         return None
     hits = [i for i, o in enumerate(options) if re.search(rf"(?<!\w){re.escape(o.lower())}(?!\w)", low)]
     # "T1-weighted with contrast" also holds "T1-weighted": the longer option is the answer
@@ -117,6 +134,10 @@ def parse_choice(text, options, style):
             index = ord((m.group(1) or m.group(2))) - ord("a")
     if index is not None and index < len(options):
         return index
+    if claims:
+        return marked  # None when the letters and option texts disagree
+    if marked is not None:
+        return marked
     return hits[0] if len(hits) == 1 else None
 
 

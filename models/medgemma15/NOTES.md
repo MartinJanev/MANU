@@ -47,6 +47,9 @@ Before running: export `HF_TOKEN` (an account that accepted the HAI-DEF terms) o
 
 ## Dev run
 
+- Jobs 2908 / 2914 / 2920 (2026-11-23): full prompt and prior parse; in Q&A it explains its choice in prose ("... is **C. T2-weighted**"), which parse_choice now reads (88 -> 121 of 126 dev answers).
+
+
 Smoke test (1 IXI, 1 MS): `sbatch -J medgemma15 jobs/run_model.sh medgemma15 --split dev --datasets ixi,ms --controls`
 
 - Job 2759 (2026-11-20, dev): IXI answered in JSON; the 4 MOLAB scans, the MS scan and the CT-RATE scan got a

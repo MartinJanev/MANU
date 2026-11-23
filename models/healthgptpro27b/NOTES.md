@@ -45,6 +45,9 @@ Before running: no gating is shown on the card (if the download asks for a token
 
 ## Dev run
 
+- Job 2906 (2026-11-23): IXI002 answered "T1" (3 tokens, prompt opened <think>): unparseable, kept as model behaviour. Q&A (2912): 136 of 136 answers parse.
+
+
 ## Eval run
 
 - Job 2762 (2026-11-20): all 32 answers `truncated_think`, about 10 s per scan, peak 51.7 GB. `details.raw` is plain

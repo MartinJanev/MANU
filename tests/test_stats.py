@@ -146,6 +146,17 @@ def test_the_paper_baseline_does_not_overwrite_the_pilots(tmp_path):
     assert stats.acquisition_baseline(tmp_path) == pytest.approx(0.885)
 
 
+def test_a_model_that_failed_validation_is_marked_and_left_out_of_the_comparisons(tmp_path):
+    results, out = tmp_path / "results", tmp_path / "tables"
+    for name in ("radfm-qna", "medgemma-1.5-4b", "hlip"):
+        write(results, name, perfect)
+    stats.write_tables(results, out, SPLITS)
+    diagnosis = (out / "results_diagnosis.tex").read_text()
+    assert "RadFM$^\\dagger$" in diagnosis and "could not be validated" in diagnosis
+    pairs = (out / "results_pairs.tex").read_text()
+    assert "RadFM" not in pairs and "MedGemma 1.5" in pairs
+
+
 def test_every_table_is_written(tmp_path):
     stats.write_tables(tmp_path, tmp_path / "t", SPLITS)
     assert {p.name for p in (tmp_path / "t").glob("results_*.tex")} == {

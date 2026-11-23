@@ -11,6 +11,9 @@ config.json and modeling_m3d_lamed.py of the checkpoint.
 
 ## Dev run
 
+- Job 2898 (2026-11-23): loads (4 shards), every answer parses. Modality "CT" for every MRI scan, diagnosis stroke for most scans and the blank volume. Passes the gate.
+
+
 Not run yet.
 
 ## Eval run

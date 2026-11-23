@@ -33,6 +33,11 @@ MODELS_SLICES = {"medgemma-1.5-4b": "MedGemma 1.5", "healthgpt-pro-27b": "Health
                  "qoq-med-vl-7b": "QoQ-Med-VL", "fleming-vl-8b": "Fleming-VL", "qwen3-vl-8b": "Qwen3-VL"}
 MODELS_REFERENCE = {"hlip": "HLIP (reference)"}
 MODELS = {**MODELS_3D, **MODELS_SLICES, **MODELS_REFERENCE}
+# Failed the validation gate of PROTOCOL.md on dev (decided 2026-11-23, before any run on the split paper): shown
+# with a dagger, left out of the pairwise comparisons.
+NOT_VALIDATED = {"radfm-qna"}
+DAGGER_NOTE = ("$^\\dagger$ Ran, but could not be validated: on its authors' own example it gives the same answer to "
+               "the image and to a blank input.")
 QNA_NATIVE = ("radfm-qna", "m3d-lamed-phi3", "m3d-lamed-llama2", "med-2e3")
 TBD = "\\TBD"
 
@@ -198,12 +203,16 @@ def latex(caption, label, spec, header, rows, size="footnotesize"):
     return "\n".join(lines + ["\\bottomrule", "\\end{tabular}", "\\end{table}"]) + "\n"
 
 
+def shown_name(key, shown):
+    return shown + "$^\\dagger$" if key in NOT_VALIDATED else shown
+
+
 def grouped(make_row, groups=(MODELS_3D, MODELS_SLICES, MODELS_REFERENCE)):
     rows = []
     for group in groups:
         if rows:
             rows.append(None)
-        rows += [make_row(key, shown) for key, shown in group.items()]
+        rows += [make_row(key, shown_name(key, shown)) for key, shown in group.items()]
     return rows
 
 
@@ -245,7 +254,7 @@ def write_tables(results, out, splits):
         f"Diagnosis (\\%). Recall per dataset (IXI $n={n['ixi']}$, MOLAB $n={n['molab']}$, MS $n={n['ms']}$) and, on "
         "the three T1 conditions together, balanced accuracy with its 95\\% bootstrap interval, accuracy, macro-F1 "
         "and weighted F1. An unparseable answer counts as wrong. Acquisition only: a classifier that sees voxel "
-        "spacing, volume shape and intensity percentiles, but no anatomy.",
+        "spacing, volume shape and intensity percentiles, but no anatomy. " + DAGGER_NOTE,
         "tab:diagnosis", "@{}lrrrrcrrr@{}",
         ["Model", "IXI", "MOLAB", "MS", "MS FLAIR", "Bal.\\ acc.\\ [95\\% CI]", "Acc.", "M-F1", "W-F1"],
         rows, "scriptsize"))
@@ -260,7 +269,7 @@ def write_tables(results, out, splits):
                           *([TBD] * len(classes) if counts is None else [counts[c] for c in classes])])
         return block
 
-    rows = [row for key, shown in MODELS.items() for row in confusion_rows(key, shown)]
+    rows = [row for key, shown in MODELS.items() for row in confusion_rows(key, shown_name(key, shown))]
     save("confusion", latex("Confusion matrices: number of patients per predicted diagnosis.", "tab:confusion",
                             "@{}llrrrrrr@{}", ["Model", "Truth", "Normal", "Tumor", "MS", "Stroke", "Other", "Null"],
                             rows, "scriptsize"))
@@ -371,7 +380,7 @@ def write_tables(results, out, splits):
         "tab:failures", "@{}lrrrrc@{}",
         ["Model", "Unparseable", "Abstained", "Top answer", "Order-stable", "Blank"], grouped(failures_row)))
 
-    names = list(MODELS)
+    names = [m for m in MODELS if m not in NOT_VALIDATED]
     pairs = [(a, b) for a, b in itertools.combinations(names, 2) if complete(run(a)) and complete(run(b))]
     compared = [compare(run(b), run(a)) for a, b in pairs]
     by_pair = {pair: (diff, p) for pair, (diff, _), p in zip(pairs, compared, holm([p for _, p in compared]))}
@@ -388,7 +397,7 @@ def write_tables(results, out, splits):
 
     save("pairs", latex(
         f"Pairwise differences in balanced accuracy (points; row minus column). * $p<0.05$, paired permutation "
-        f"test, Holm-corrected over all {math.comb(len(names), 2)} pairs.", "tab:pairs",
+        f"test, Holm-corrected over all {math.comb(len(names), 2)} pairs of validated models.", "tab:pairs",
         "@{}l" + "r" * (len(names) - 1) + "@{}", ["Model", *map(str, range(1, len(names)))],
         [pairs_row(j) for j in range(len(names))], "tiny"))
 
