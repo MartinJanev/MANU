@@ -12,3 +12,22 @@ __pycache__/
 .manu_commit
 .superpowers/
 .pytest_cache/
+
+paper/
+
+# AI assistant files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+
+# model weights and checkpoints
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+*.onnx
+
+reference/
