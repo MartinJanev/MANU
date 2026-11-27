@@ -22,6 +22,10 @@ the prompt differed per dataset (so it hinted at the diagnosis), images were str
 were wrong. **Do not cite these numbers.** The paper's results come from the `paper` split (see
 [Splits](#splits)) and the protocol in [`evaluation/PROTOCOL.md`](evaluation/PROTOCOL.md).
 
+Seven additional checkpoints are available in the separate
+[cross-modality development extension](extensions/cross_modality/README.md).
+They are not part of the frozen paper runs.
+
 How to read it:
 - **bal.acc** (balanced accuracy) across IXI, MOLAB and MS. Guessing gives 33.3%.
 - **blank agreement**: how often the answer to the blank volume matches the answer to the real scan. A high
