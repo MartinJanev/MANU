@@ -96,4 +96,4 @@ Pitfalls and records the sources read (model card, repo commit) and every deviat
   dataset recognition), and MS is the only dataset with FLAIR. Blank-volume agreement shows which models ignore
   the image.
 - `data_tools/` and some older comments are in Macedonian. The first RadFM runner was removed
-  (`git show 45b8448:models/radfm/run.py`); `models/radfm_qna` replaces it.
+  (`git show 4a2317c:models/radfm/run.py`); `models/radfm_qna` replaces it.

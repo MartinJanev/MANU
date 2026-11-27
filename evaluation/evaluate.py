@@ -9,7 +9,7 @@ balanced accuracy 33.3%, the "no signal from the image" line.
 Usage:  python3 -I evaluation/evaluate.py --split dev|eval [--results results] [--reference reference]
                                           [--splits splits.json]   -> results/report_<split>.md
         python3 -I evaluation/evaluate.py --selftest
-(The older all-scans report of the first RadFM runner, eval_summary.md, was removed after 45b8448.)
+(The older all-scans report of the first RadFM runner, eval_summary.md, was removed after 4a2317c.)
 """
 import argparse
 import collections

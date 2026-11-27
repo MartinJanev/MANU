@@ -1,6 +1,6 @@
 """RadFM (MedLLaMA-13B + 3D ViT perceiver, trained on RadMD): the shared per-field questions, like the other models.
 
-The earlier runner models/radfm/run.py (removed after 45b8448) ran RadFM outside the shared pipeline (its own
+The earlier runner models/radfm/run.py (removed after 4a2317c) ran RadFM outside the shared pipeline (its own
 questions, likelihood choice calibrated on a black volume, its own run loop). This adapter puts RadFM through common.runner instead: the same
 splits, canonical volume, question bank (common.qna, the M3D "Choices: A. ... D. ..." format med-2e3 uses), output
 records, resume and blank controls as every other model, so its row in the dev/eval report is comparable.

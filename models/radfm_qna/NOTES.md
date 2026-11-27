@@ -4,7 +4,7 @@ A last attempt to run RadFM the way the other models run: `common.runner` (split
 `results/radfm-qna/<split>/`), the canonical volume, and the shared per-field questions of `common/qna.py`
 in the M3D close-ended format that med-2e3 also uses. It replaces the earlier runner `models/radfm/run.py`
 (own questions, likelihood choice calibrated on a black volume, own loop, run through `jobs/job_radfm.sh`),
-removed after 45b8448: `git show 45b8448:models/radfm/run.py`. Its one lasting finding is under Pitfalls.
+removed after 4a2317c: `git show 4a2317c:models/radfm/run.py`. Its one lasting finding is under Pitfalls.
 
 ## Setup
 
